@@ -1,165 +1,271 @@
 # Jev Mail Triage
 
-A local, dry-run-first service that assesses new Proton Mail messages through
-Proton Mail Bridge and TypeSafe.ai's Jev model. It does not access Proton Mail
-directly or change mailbox state unless movement is explicitly enabled.
+Find spam and phishing in your Proton Mail inbox — locally, safely, and without
+touching your mail until you say so.
 
-## Requirements
+Jev Mail Triage runs on your Mac, reads new messages through
+[Proton Mail Bridge](https://proton.me/mail/bridge), and asks
+[TypeSafe.ai's Jev model](https://docs.typesafe.ai/) two questions about each one:
 
-- macOS with Proton Mail Bridge running and an account configured for IMAP.
-- Python 3.11 or later.
-- A TypeSafe API key and a Jev model enabled for the account.
+1. **Is this unsolicited spam?**
+2. **Is this a scam or phishing attempt?**
 
-The Mac and Bridge must remain running for polling to work. In move mode, Apple
-Mail reflects the folder changes made by Bridge over IMAP.
+By default it only **records** the answers (dry-run). Messages are moved to a
+`Jev Review` folder only if you explicitly turn that on. Nothing is ever deleted.
+Apple Mail shows any moves automatically, because it is connected to the same
+Bridge account.
 
-## Install and configure
+> [!IMPORTANT]
+> **Privacy:** for each assessed message, the sender, subject, a shortened text
+> body, and link addresses are sent to TypeSafe. That data leaves Proton's
+> end-to-end encrypted environment. Use this tool only if you are comfortable
+> with that.
 
-From this project directory:
+## What you need
+
+- A Mac with **Proton Mail Bridge** installed, signed in, and running.
+- **Python 3.11** or later.
+- A **TypeSafe API key** with access to a Jev model.
+
+Your Mac and Bridge must stay running for the service to check mail.
+
+## Quick start
+
+### 1. Install
+
+From this project folder:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
+```
+
+### 2. Create your config file
+
+```sh
 mkdir -p ~/.config/jev-mail-triage
 cp config.example.toml ~/.config/jev-mail-triage/config.toml
 ```
 
-Edit `~/.config/jev-mail-triage/config.toml` with the host, port, security mode,
-username, and account identifier shown in Proton Mail Bridge. Choose either
-`starttls` or `implicit_tls` exactly as Bridge specifies; the service does not
-probe or downgrade TLS. Certificate and hostname validation are always enabled.
-If macOS does not trust the Bridge certificate, configure `tls_ca_file` to a
-PEM CA/certificate file supplied by your Bridge setup. Do not disable
-verification or install a global trust bypass.
+### 3. Copy your settings from Bridge
 
-Store secrets interactively in macOS Keychain:
+Open **Proton Mail Bridge**, select your account, and open
+**Mailbox details → IMAP**. You will see a host, port, security mode, username,
+and password.
 
-Find the **Bridge password** in the Proton Mail Bridge app: select your account,
-then look under **Mailbox details → IMAP → Password**. Copy that Bridge-generated
-password and enter it when `secret set bridge-password` prompts you. It is **not
-your Proton account password**. Use the username shown in the same IMAP section.
-Do not put the password in the config file or share it in screenshots.
+Edit `~/.config/jev-mail-triage/config.toml` and fill in the `[bridge]` section:
+
+| Config setting  | Where to find it in Bridge                      |
+| --------------- | ----------------------------------------------- |
+| `host`          | IMAP host (usually `127.0.0.1`)                 |
+| `port`          | IMAP port (often `1143`)                        |
+| `security_mode` | `starttls` or `implicit_tls`, exactly as shown  |
+| `username`      | IMAP username (usually your email address)      |
+
+Do **not** put the password in the config file. You will store it in Keychain
+in the next step.
+
+### 4. Store your secrets in macOS Keychain
 
 ```sh
-.venv/bin/jev-mail-triage --config ~/.config/jev-mail-triage/config.toml \
-  secret set bridge-password
+.venv/bin/jev-mail-triage secret set bridge-password
 .venv/bin/jev-mail-triage secret set typesafe-api-key
 ```
 
-The selected Python `keyring` backend must be macOS Keychain; the program
-refuses to use another backend. Bridge credentials are keyed by `account_id`.
-`secret set bridge-password` reads that identifier from the selected config.
+Each command asks you to paste the secret. Nothing is shown on screen.
 
-## Commands
+- **Bridge password:** copy it from **Mailbox details → IMAP → Password** in
+  Bridge. This is a Bridge-generated password, **not your Proton account
+  password**.
+- **TypeSafe API key:** copy it from your TypeSafe account.
 
-The first `poll` or `serve` run records the current Inbox UIDVALIDITY/UIDNEXT
-baseline and intentionally leaves existing messages alone. Only later arrivals
-are processed. Use an explicit bounded backfill to assess existing messages;
-it processes newest first and accepts at most 1,000 per invocation.
+Never share these in screenshots or chat. If one leaks, rotate it (see
+[Troubleshooting](#troubleshooting)).
+
+> [!TIP]
+> The commands use `~/.config/jev-mail-triage/config.toml` by default. To use
+> another file, add `--config /path/to/config.toml` before the command, for
+> example `jev-mail-triage --config my.toml poll`.
+
+### 5. Check that it connects
 
 ```sh
-# Assess new arrivals once; always dry-run, regardless of config.
 .venv/bin/jev-mail-triage poll
+```
 
-# Show counts and operational statuses only; no message content is stored/output.
-.venv/bin/jev-mail-triage status
-.venv/bin/jev-mail-triage status --json
+The first run records a **baseline**: it notes where your Inbox currently ends
+and skips existing messages. From then on, only new arrivals are assessed.
+`poll` never moves mail.
 
-# List up to 20 stored review candidates using local SQLite only.
-.venv/bin/jev-mail-triage candidates
-.venv/bin/jev-mail-triage candidates --limit 100 --json
+### 6. (Optional) Assess some existing messages
 
-# Explicitly fetch subject, sender, date, and Message-ID locally from Bridge.
-.venv/bin/jev-mail-triage candidates --headers
-
-# Re-queue up to 20 non-movement failures for another attempt.
-.venv/bin/jev-mail-triage retry --limit 20
-
-# Explicitly assess up to 25 existing messages. Dry-run unless config enables moves.
-.venv/bin/jev-mail-triage backfill --limit 25
+```sh
 .venv/bin/jev-mail-triage backfill --limit 25 --dry-run
+```
 
-# Poll continuously at service.poll_interval_seconds (default 60).
+This assesses up to 25 of your newest existing messages without moving them.
+Each assessed message is sent to TypeSafe and may use API credits.
+
+### 7. Run it continuously
+
+```sh
 .venv/bin/jev-mail-triage serve
 ```
 
-`serve` and `backfill` honor `policy.move_enabled`; it defaults to `false`.
-`poll` always forces dry-run. To permit automatic moves, deliberately set
-`move_enabled = true` in the config and run `serve` or a backfill. Only messages
-at or above the configured spam or scam/phishing threshold are candidates.
-Defaults (`spam_threshold = 0.98`, `scam_threshold = 0.95`) are provisional,
-not validated guarantees. Calibrate using labeled fixtures before enabling
-movement. Truncated inputs are never moved. Uncertain or clean messages remain
-where they are; this application never deletes mail.
+This checks for new mail every 60 seconds. Press `Ctrl+C` to stop. To run it in
+the background at login, see [Run at login](#run-at-login-optional).
 
-`retry` only re-queues failed assessments without a pending/ambiguous movement
-journal. Ambiguous movement states require manual inspection and are never
-automatically repeated. The status output includes stored move-decision counts,
-which are classification verdicts rather than confirmation that mail moved.
-`candidates` lists those recorded move decisions, including historical decisions,
-with UIDVALIDITY, UID, Message-ID, scores, reason, status, and truncation flag.
-It reads SQLite without updating assessments and can run alongside `serve`.
-The default limit is 20 (maximum 1,000); newest assessments appear first.
-Only `--headers` connects to Bridge. It selects the source mailbox read-only and
-uses bounded `BODY.PEEK` header fetches, preserving read status. Headers are
-printed locally, never stored or sent to TypeSafe. JSON escaping prevents email
-header control characters from affecting the terminal. A changed UIDVALIDITY,
-missing source message, or non-pending status is reported instead of looking up
-an unrelated UID or searching the review folder. Connection failures are explicit.
-Bridge operations retry up to `max_attempts` with exponential backoff capped by
-`backoff_max_seconds`. TypeSafe failures are retried per message and persisted;
-exhausted messages require the explicit `retry` command.
+### 8. Review the results
 
-## Classification and privacy
+```sh
+.venv/bin/jev-mail-triage status
+.venv/bin/jev-mail-triage candidates --headers
+```
 
-The service sends the sender, subject, bounded text body, and extracted link
-destinations to TypeSafe in one request with separate spam and scam/phishing
-Noul questions. The criteria distinguish unsolicited bulk mail from subscribed
-newsletters, receipts, and genuine correspondence, and do not treat link
-presence alone as malicious. Norwegian and English messages are supported.
-TypeSafe receives these fields outside Proton's end-to-end encrypted
-environment; use only if that data flow is acceptable to you.
+`status` shows counts. `candidates --headers` lists the messages Jev considers
+spam or phishing, with subject, sender, and date, so you can check whether it
+got them right.
 
-MIME parsing is local. Plain text is preferred; HTML is reduced to text, script
-and style contents are discarded, and links are listed without fetching them.
-Attachments are excluded. The service does not load remote resources, follow
-links, execute message content, or send attachments. Raw IMAP reads use
-`BODY.PEEK` so unread mail remains unread. Input is bounded (2 MiB fetched from
-Bridge and 64 KiB sent by default); truncation is recorded and prevents a move.
+## Everyday commands
 
-The SQLite database stores mailbox/UID identity, a content fingerprint,
-Message-ID if available, scores, model/policy versions, retry state, and
-movement journal. It does not store message bodies, subjects, or senders.
-Database and lock files are restricted to the current user. Bridge password and
-TypeSafe API key are stored in macOS Keychain. Logs contain operational status
-and UIDs only; they do not include credentials or message content.
+| Command                           | What it does                                                  | Changes mail?               |
+| --------------------------------- | ------------------------------------------------------------- | --------------------------- |
+| `poll`                            | Checks for new mail once                                      | Never                       |
+| `serve`                           | Checks for new mail every 60 seconds                          | Only if moves are enabled   |
+| `status`                          | Shows counts per status; no message content                   | No                          |
+| `candidates`                      | Lists the 20 newest spam/phishing decisions (scores and IDs)  | No                          |
+| `candidates --headers`            | Same, plus subject, sender, and date fetched from Bridge      | No                          |
+| `backfill --limit N`              | Assesses up to N existing messages, newest first (max 1,000)  | Only if moves are enabled   |
+| `backfill --limit N --dry-run`    | Same, but never moves anything                                | Never                       |
+| `retry --limit N`                 | Tries failed assessments again                                | No (they are re-queued)     |
+| `evaluate --labels FILE.csv`      | Measures accuracy against labelled test emails                | No                          |
+| `secret set NAME`                 | Stores a secret in Keychain                                   | No                          |
 
-The optional allowlist only suppresses a move when an exact address/domain
-matches and a configured trusted `Authentication-Results` authserv-id reports
-DMARC pass. Proton does not document a guarantee that such inbound headers are
-added or sanitized. Do not configure this option unless you have independently
-verified that the named receiver is trusted and strips/replaces forged headers.
-Missing or untrusted authentication evidence never suppresses a move.
+Prefix each command with `.venv/bin/jev-mail-triage`, or activate the virtual
+environment first (`source .venv/bin/activate`) and run `jev-mail-triage`.
 
-## Safe movement
+Useful options:
 
-When enabled, the service creates/uses a root-level `Jev Review` folder and
-rechecks the source UID, UIDVALIDITY, and content fingerprint immediately before
-acting. It prefers UID MOVE. If unavailable, it requires UIDPLUS, copies the
-message, verifies the copied content, then deletes only the source UID with
-UID EXPUNGE. It never issues a broad EXPUNGE. If the server cannot safely
-complete or reconcile an action, the item is marked for attention rather than
-blindly retried. UIDVALIDITY changes establish a new baseline; use bounded
-backfill if you need to review messages that arrived during a reset window.
+- `status --json` and `candidates --json` print machine-readable output.
+- `candidates --limit 100` shows more results (maximum 1,000).
 
-## Fixture evaluation
+> [!NOTE]
+> `--dry-run` prevents mailbox changes, but messages are **still sent to
+> TypeSafe** for assessment.
 
-Evaluation sends each listed fixture to TypeSafe and may incur API usage. Use
-synthetic or otherwise approved fixtures only; never use real inbox messages for
-automated testing. The CSV is local, with a header and one `.eml` path and
-two boolean labels per row:
+### Understanding the output
+
+- **`assessed`** — the message was checked.
+- **`move_decision`** — Jev scored it at or above a threshold. In dry-run mode
+  this means "would have moved", **not** that it was moved.
+- **`baseline` / `rebaseline`** — the service recorded a new starting point and
+  skipped existing mail. A rebaseline happens when the mailbox identity changes,
+  for example after removing and re-adding the account in Bridge.
+
+`candidates` reads only the local database and can run while `serve` is running.
+Only `--headers` contacts Bridge. It opens the Inbox read-only, so messages stay
+unread. Headers are printed on your screen only; they are not stored or sent to
+TypeSafe.
+
+## Turning on automatic moves
+
+Start in dry-run mode, review `candidates --headers` for a while, and only enable
+moves once you trust the results.
+
+1. Review the thresholds in the `[policy]` section of your config:
+
+   ```toml
+   move_enabled = false
+   spam_threshold = 0.98
+   scam_threshold = 0.95
+   ```
+
+   A message is a candidate when either score is **at or above** its threshold.
+   Lower values catch more messages but increase the risk of false positives.
+   These defaults are **provisional**, not validated guarantees. Calibrate them
+   with [labelled test emails](#measuring-accuracy) if you can.
+
+2. Set `move_enabled = true`.
+3. Restart `serve`.
+
+When moves are enabled:
+
+- Only high-scoring messages are moved, into a `Jev Review` folder (configurable
+  with `review_folder`). Apple Mail shows it under your Proton account.
+- Uncertain and clean messages stay where they are.
+- Messages whose content was too large to send in full are never moved.
+- **Nothing is ever deleted.** Check `Jev Review` and move any mistakes back.
+
+> [!NOTE]
+> Changing thresholds affects future assessments only. Messages that were
+> already assessed are not rescored.
+
+## Troubleshooting
+
+**"Could not connect to Proton Mail Bridge"**
+Make sure Bridge is open and signed in. Check that `host`, `port`, and
+`security_mode` match **Mailbox details → IMAP** exactly.
+
+**Login fails, or Bridge reports "no such user"**
+The username or password does not match Bridge. Copy both again from
+**Mailbox details → IMAP**, then run `secret set bridge-password`.
+
+**My Bridge password was exposed**
+In Bridge, remove the account (trash icon) and add it again; this creates a new
+password. Run `secret set bridge-password` again. Expect a `rebaseline` on the
+next run.
+
+**Certificate or TLS errors**
+Certificate checks are always on and cannot be disabled. If macOS does not trust
+the Bridge certificate, export it from Bridge as a PEM file and set `tls_ca_file`
+in the `[bridge]` section. Do not install a global trust bypass.
+
+**Keychain error**
+The program only stores secrets in macOS Keychain and refuses other storage
+backends.
+
+**Messages stuck as failed**
+Temporary TypeSafe or Bridge errors are retried automatically with increasing
+delays. If a message still fails, run `retry --limit 20`. Moves with an unclear
+outcome are never retried automatically; check those messages by hand.
+
+**`move_decision` is greater than zero, but nothing moved**
+That is expected in dry-run mode. See
+[Turning on automatic moves](#turning-on-automatic-moves).
+
+## Run at login (optional)
+
+A sample macOS LaunchAgent is included at
+`launchd/com.soderlind.jev-mail-triage.plist`. This project never installs or
+activates it for you.
+
+1. Open the sample file and replace the executable and log paths with absolute
+   paths for your setup.
+2. Install and start it:
+
+   ```sh
+   mkdir -p ~/Library/LaunchAgents ~/Library/Logs
+   cp launchd/com.soderlind.jev-mail-triage.plist \
+     ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
+   plutil -lint ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
+   launchctl bootstrap "gui/$(id -u)" \
+     ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
+   ```
+
+3. To stop and unload it:
+
+   ```sh
+   launchctl bootout "gui/$(id -u)/com.soderlind.jev-mail-triage"
+   ```
+
+Only do this after you have reviewed the dry-run results.
+
+## Measuring accuracy
+
+You can measure how well Jev and your thresholds perform using labelled `.eml`
+files. Create a CSV file next to them:
 
 ```csv
 path,spam,scam_phishing
@@ -167,47 +273,107 @@ newsletter.eml,false,false
 phishing.eml,false,true
 ```
 
-Paths are resolved relative to the CSV. Run:
+Paths are relative to the CSV. Then run:
 
 ```sh
 .venv/bin/jev-mail-triage evaluate --labels ./fixtures/labels.csv
 ```
 
-Output includes false positives, precision, recall for spam, scam/phishing,
-and combined review decisions, plus review volume. The evaluation uses the
+The report shows false positives, precision, recall (for spam, scam/phishing,
+and combined), and how many messages would be sent for review. It uses your
 configured thresholds and model.
 
-## LaunchAgent (optional)
+Each file is sent to TypeSafe and may use API credits. Use synthetic or
+otherwise approved emails, not real inbox messages.
 
-`launchd/com.soderlind.jev-mail-triage.plist` is a sample only. It is not
-installed or activated by this project. Copy it to
-`~/Library/LaunchAgents/`, replace the executable/log paths with absolute paths
-for your installation, create the log directory, and inspect it before manually
-bootstrapping it. Example user-run steps after editing the sample:
+## How it protects you
 
-```sh
-mkdir -p ~/Library/LaunchAgents ~/Library/Logs
-cp launchd/com.soderlind.jev-mail-triage.plist \
-  ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
-plutil -lint ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
-launchctl bootstrap "gui/$(id -u)" \
-  ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
-# To stop and unload:
-launchctl bootout "gui/$(id -u)/com.soderlind.jev-mail-triage"
-```
+**Your mail**
 
-Only bootstrap it after verifying dry-run results and consciously enabling
-movement if desired. These commands are documentation only; the project does
-not copy, load, or activate the LaunchAgent.
+- Dry-run by default; moves require `move_enabled = true`.
+- Never deletes mail.
+- Reads messages with `BODY.PEEK`, so unread mail stays unread.
+- Before moving a message, it checks that the message still exists and is
+  unchanged. It prefers IMAP `UID MOVE`. Otherwise, it copies the message,
+  verifies the copy, and removes only that one message. It never runs a broad
+  `EXPUNGE`; if a move cannot be completed safely, it stops and flags the
+  message.
+- Only one worker can run at a time.
 
-## Development checks
+**Message content**
 
-Tests use synthetic `.eml` fixtures and fake IMAP/TypeSafe clients only:
+- Emails are parsed locally. Plain text is preferred; HTML is converted to text,
+  with scripts and styles removed.
+- Links are listed but never opened. Remote images and other resources are never
+  loaded, and message content is never executed.
+- Attachments are never sent.
+- Input is limited: up to 2 MiB is read from Bridge and up to 64 KiB is sent to
+  TypeSafe by default (`max_input_bytes`). Truncated messages are never moved.
+- Email content is treated as untrusted data in the Jev prompt. The criteria
+  separate spam from subscribed newsletters, receipts, and genuine
+  correspondence. A link alone is not considered malicious. Norwegian and
+  English are supported.
+
+**Local storage**
+
+- The database (`~/Library/Application Support/jev-mail-triage/state.sqlite3`)
+  stores message identifiers, a content fingerprint, Message-ID, scores,
+  model/policy versions, retry state, and move history. It **does not** store
+  bodies, subjects, or senders.
+- Database and lock files are readable only by your user account.
+- The Bridge password and TypeSafe API key are stored only in macOS Keychain.
+- Logs contain status information and message numbers only, never credentials
+  or message content.
+
+## Reference
+
+### Configuration
+
+| Section     | Setting                 | Default                | Meaning                                               |
+| ----------- | ----------------------- | ---------------------- | ----------------------------------------------------- |
+| *(top)*     | `database_path`         | Application Support    | SQLite state file                                     |
+| `[bridge]`  | `account_id`            | `primary`              | Name used to find the Bridge password in Keychain     |
+|             | `host`, `port`          | `127.0.0.1`, `1143`    | Bridge IMAP address                                   |
+|             | `security_mode`         | `starttls`             | `starttls` or `implicit_tls`, as Bridge shows         |
+|             | `username`              | —                      | Bridge IMAP username                                  |
+|             | `mailbox`               | `INBOX`                | Folder to check                                       |
+|             | `tls_ca_file`           | *(unset)*              | PEM certificate if macOS does not trust Bridge        |
+| `[service]` | `poll_interval_seconds` | `60`                   | Time between checks                                   |
+|             | `batch_size`            | `20`                   | Messages per check                                    |
+|             | `max_attempts`          | `5`                    | Attempts before a message is marked as failed         |
+|             | `backoff_max_seconds`   | `300`                  | Longest delay between attempts                        |
+| `[policy]`  | `move_enabled`          | `false`                | Allow moves in `serve` and `backfill`                 |
+|             | `spam_threshold`        | `0.98` (provisional)   | Minimum spam score for review                         |
+|             | `scam_threshold`        | `0.95` (provisional)   | Minimum scam/phishing score for review                |
+|             | `max_input_bytes`       | `65536`                | Maximum text sent to TypeSafe                         |
+|             | `review_folder`         | `Jev Review`           | Destination folder for moves                          |
+|             | `model`                 | `jev-latest`           | TypeSafe model                                        |
+|             | `allowlist`             | `[]`                   | Trusted senders; see below                            |
+|             | `trusted_authserv_id`   | *(unset)*              | Required for the allowlist                            |
+
+### Allowlist (advanced)
+
+The allowlist prevents a move only when the sender address or domain matches
+**and** a trusted `Authentication-Results` header (from `trusted_authserv_id`)
+reports DMARC pass. Proton does not document that it adds or cleans these
+headers, so configure this only if you have independently verified that the
+named receiver is trusted and replaces forged headers. Missing or untrusted
+authentication evidence never prevents a move.
+
+### Mailbox resets
+
+If the mailbox identity (IMAP UIDVALIDITY) changes, the service records a new
+baseline instead of reprocessing or moving old messages. Use a bounded
+`backfill` if you want to assess messages that arrived during the reset.
+
+## Development
+
+Tests use synthetic `.eml` files and fake IMAP/TypeSafe clients only:
 
 ```sh
 python -m pytest
 python -m ruff check src tests
 ```
 
-The automated suite does not connect to Proton Mail Bridge, access a real
-mailbox, call TypeSafe, move messages, or activate a LaunchAgent.
+The tests do not connect to Proton Mail Bridge, access a real mailbox, call
+TypeSafe, move messages, or activate a LaunchAgent.
