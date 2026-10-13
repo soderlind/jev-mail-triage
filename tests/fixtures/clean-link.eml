@@ -1,0 +1,9 @@
+From: Alex Example <alex@example.test>
+To: recipient@example.test
+Subject: Meeting notes
+Message-ID: <meeting-1@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi, here are the notes from our meeting. The shared document is at
+https://example.test/notes?id=42. See you tomorrow.

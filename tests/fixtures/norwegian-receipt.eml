@@ -1,0 +1,8 @@
+From: Butikk <ordre@butikk.example.test>
+To: recipient@example.test
+Subject: Kvittering for kjøpet ditt
+Message-ID: <kvittering-1@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Takk for bestillingen. Dette er kvitteringen din. Ordrenummer 1234.

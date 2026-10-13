@@ -1,0 +1,28 @@
+database_path = "~/Library/Application Support/jev-mail-triage/state.sqlite3"
+
+[bridge]
+account_id = "primary"
+host = "127.0.0.1"
+port = 1143
+security_mode = "starttls" # Copy the mode and port shown by Proton Mail Bridge.
+username = "replace-with-Bridge-username"
+mailbox = "INBOX"
+# Optional PEM certificate file when the Bridge certificate is not in macOS trust.
+# tls_ca_file = "~/path/to/proton-bridge-ca.pem"
+
+[service]
+poll_interval_seconds = 60
+batch_size = 20
+max_attempts = 5
+backoff_max_seconds = 300
+
+[policy]
+move_enabled = false
+spam_threshold = 0.98 # Provisional; calibrate with labeled fixtures.
+scam_threshold = 0.95 # Provisional; calibrate with labeled fixtures.
+max_input_bytes = 65536
+review_folder = "Jev Review"
+model = "jev-latest"
+# Set only to a receiver Authentication-Results authserv-id you trust.
+# trusted_authserv_id = "replace-with-trusted-receiver-id"
+allowlist = []

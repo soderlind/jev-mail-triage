@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.soderlind.jev-mail-triage</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/absolute/path/to/jev-mail-triage</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/absolute/path/to/jev-mail-triage.log</string>
+    <key>StandardErrorPath</key>
+    <string>/absolute/path/to/jev-mail-triage-error.log</string>
+</dict>
+</plist>

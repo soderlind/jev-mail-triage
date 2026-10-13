@@ -1,0 +1,10 @@
+From: Account Security <notice@lookalike.example.test>
+To: recipient@example.test
+Subject: Urgent: verify your account
+Message-ID: <phish-1@example.test>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Your account will be closed. Verify immediately:</p>
+<a href="https://login-lookalike.example.test/verify">Sign in</a>
+<script>document.location='https://remote.example.test/';</script></body></html>

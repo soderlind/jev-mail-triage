@@ -1,0 +1,9 @@
+From: Weekly Science <newsletter@science.example.test>
+To: recipient@example.test
+Subject: Your subscribed weekly digest
+Message-ID: <digest-1@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+You are receiving this weekly digest because you subscribed on our website.
+Unsubscribe at https://science.example.test/unsubscribe.

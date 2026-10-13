@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-mail-triage"
+version = "0.1.0"
+description = "Local Proton Mail Bridge triage service using TypeSafe Jev"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "keyring>=25.6,<27",
+    "truststore>=0.10,<1",
+    "typesafe-sdk>=0.7.4,<0.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.11,<1",
+]
+
+[project.scripts]
+jev-mail-triage = "jev_mail_triage.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
