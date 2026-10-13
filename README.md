@@ -33,9 +33,9 @@ Your Mac and Bridge must stay running for the service to check mail.
 
 ### 1. Install
 
-From this project folder:
-
 ```sh
+git clone https://github.com/soderlind/jev-mail-triage.git
+cd jev-mail-triage
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -377,3 +377,7 @@ python -m ruff check src tests
 
 The tests do not connect to Proton Mail Bridge, access a real mailbox, call
 TypeSafe, move messages, or activate a LaunchAgent.
+
+## License
+
+[MIT](LICENSE)
