@@ -36,6 +36,12 @@ verification or install a global trust bypass.
 
 Store secrets interactively in macOS Keychain:
 
+Find the **Bridge password** in the Proton Mail Bridge app: select your account,
+then look under **Mailbox details → IMAP → Password**. Copy that Bridge-generated
+password and enter it when `secret set bridge-password` prompts you. It is **not
+your Proton account password**. Use the username shown in the same IMAP section.
+Do not put the password in the config file or share it in screenshots.
+
 ```sh
 .venv/bin/jev-mail-triage --config ~/.config/jev-mail-triage/config.toml \
   secret set bridge-password
