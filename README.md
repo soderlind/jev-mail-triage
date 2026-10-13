@@ -115,7 +115,7 @@ Each assessed message is sent to TypeSafe and may use API credits.
 ```
 
 This checks for new mail every 60 seconds. Press `Ctrl+C` to stop. To run it in
-the background at login, see [Run at login](#run-at-login-optional).
+the background at login, see [Run in the background](#run-in-the-background).
 
 ### 8. Review the results
 
@@ -235,32 +235,75 @@ outcome are never retried automatically; check those messages by hand.
 That is expected in dry-run mode. See
 [Turning on automatic moves](#turning-on-automatic-moves).
 
-## Run at login (optional)
+## Run in the background
 
-A sample macOS LaunchAgent is included at
-`launchd/com.soderlind.jev-mail-triage.plist`. This project never installs or
+The best way to keep the service running is a macOS LaunchAgent. It starts
+`jev-mail-triage serve` when you log in, restarts it if it exits, and runs in
+your login session, so it can read your Keychain secrets. A sample is included
+at `launchd/com.soderlind.jev-mail-triage.plist`. This project never installs or
 activates it for you.
 
-1. Open the sample file and replace the executable and log paths with absolute
-   paths for your setup.
-2. Install and start it:
+Only do this after you have reviewed the dry-run results.
+
+1. **Install the LaunchAgent with your paths filled in.** Run this from the
+   project folder. The log-path substitutions must come before the executable
+   path substitution.
 
    ```sh
    mkdir -p ~/Library/LaunchAgents ~/Library/Logs
-   cp launchd/com.soderlind.jev-mail-triage.plist \
-     ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
+   sed -e "s#/absolute/path/to/jev-mail-triage.log#$HOME/Library/Logs/jev-mail-triage.log#" \
+       -e "s#/absolute/path/to/jev-mail-triage-error.log#$HOME/Library/Logs/jev-mail-triage-error.log#" \
+       -e "s#/absolute/path/to/jev-mail-triage#$PWD/.venv/bin/jev-mail-triage#" \
+       launchd/com.soderlind.jev-mail-triage.plist \
+       > ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
    plutil -lint ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
+   ```
+
+2. **Start it:**
+
+   ```sh
    launchctl bootstrap "gui/$(id -u)" \
      ~/Library/LaunchAgents/com.soderlind.jev-mail-triage.plist
    ```
 
-3. To stop and unload it:
+3. **Check that it is running:**
+
+   ```sh
+   launchctl print "gui/$(id -u)/com.soderlind.jev-mail-triage" | grep -E "state|pid"
+   tail -f ~/Library/Logs/jev-mail-triage*.log
+   .venv/bin/jev-mail-triage status
+   ```
+
+4. **Restart it after changing the config.** The service reads `config.toml`
+   only at startup, so changes to thresholds or `move_enabled` need a restart:
+
+   ```sh
+   launchctl kickstart -k "gui/$(id -u)/com.soderlind.jev-mail-triage"
+   ```
+
+5. **Stop and unload it:**
 
    ```sh
    launchctl bootout "gui/$(id -u)/com.soderlind.jev-mail-triage"
    ```
 
-Only do this after you have reviewed the dry-run results.
+Things to know:
+
+- **Bridge must be running.** Turn on "Start Bridge on startup" in Proton Mail
+  Bridge settings. If Bridge is not running, the service retries with backoff.
+- **Keychain prompt.** The first time the service runs in the background, macOS
+  may ask whether Python can access your Keychain items. Choose
+  **Always Allow**, otherwise the service cannot log in while you are away.
+- **Sleep.** Nothing is checked while the Mac is asleep. Mail that arrived in
+  the meantime is picked up on the first poll after it wakes.
+- **Crash loops.** If the service keeps exiting, for example because of a config
+  error, launchd restarts it about every 10 seconds. If `status` stops changing,
+  check `~/Library/Logs/jev-mail-triage-error.log`.
+- **Moving the project folder** breaks the absolute path in the LaunchAgent.
+  Repeat step 1 after moving it.
+- **Dry-run first.** While `move_enabled = false`, the service only records
+  decisions. Let it run for a while and review `candidates` before you turn on
+  moves.
 
 ## Measuring accuracy
 
