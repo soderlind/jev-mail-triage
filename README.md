@@ -10,6 +10,8 @@ touching your mail until you say so.
   <figcaption>Statistics view in Jev Mail Triage</figcaption>
 </figure>
 
+<hr>
+
 Jev Mail Triage runs on your Mac, reads new messages through
 [Proton Mail Bridge](https://proton.me/mail/bridge), and asks
 [TypeSafe.ai's Jev model](https://docs.typesafe.ai/) two questions about each one:
