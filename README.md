@@ -1,7 +1,9 @@
-# Jev Mail Triage
+# Jev Mail Triage for Proton Mail
 
 Find spam and phishing in your Proton Mail inbox — locally, safely, and without
 touching your mail until you say so.
+
+*An independent tool; not affiliated with or endorsed by Proton AG or TypeSafe.*
 
 Jev Mail Triage runs on your Mac, reads new messages through
 [Proton Mail Bridge](https://proton.me/mail/bridge), and asks

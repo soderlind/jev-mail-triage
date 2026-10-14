@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jev-mail-triage"
 version = "1.1.0"
-description = "Local Proton Mail Bridge triage service using TypeSafe Jev"
+description = "Local spam and phishing triage for Proton Mail Bridge, powered by TypeSafe Jev"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
