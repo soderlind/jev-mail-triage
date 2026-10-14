@@ -1,10 +1,15 @@
+from dataclasses import replace
 from pathlib import Path
 
-from jev_mail_triage.config import BridgeConfig, Config, PolicyConfig, ServiceConfig
+import pytest
+
+from jev_mail_triage.config import BridgeConfig, Config, GateConfig, PolicyConfig, ServiceConfig
+from jev_mail_triage.errors import ConfigurationError
+from jev_mail_triage.gate import LocalGate
 from jev_mail_triage.imap_client import FetchedMessage
 from jev_mail_triage.message import prepare_message
 from jev_mail_triage.models import Assessment, Decision, Outcome
-from jev_mail_triage.service import run_cycle
+from jev_mail_triage.service import run_cycle, run_training, training_due
 from jev_mail_triage.state import StateStore
 
 MESSAGE = (
@@ -16,7 +21,7 @@ MESSAGE = (
 )
 
 
-def _config(path: Path, *, moves: bool) -> Config:
+def _config(path: Path, *, moves: bool, gate: GateConfig | None = None) -> Config:
     return Config(
         bridge=BridgeConfig(
             account_id="test",
@@ -44,6 +49,7 @@ def _config(path: Path, *, moves: bool) -> Config:
             backoff_max_seconds=300,
         ),
         database_path=path,
+        gate=gate or GateConfig(),
     )
 
 
@@ -62,6 +68,9 @@ class _FakeMailbox:
 
     def resolve_mailbox(self, configured_name: str) -> str:
         return "INBOX"
+
+    def list_mailboxes(self) -> list[str]:
+        return sorted(self.boxes)
 
     def select(self, mailbox: str, *, readonly: bool = True) -> tuple[int, int]:
         self.selected = mailbox
@@ -285,3 +294,146 @@ def test_one_malformed_message_does_not_block_later_queue_items(tmp_path: Path) 
     assert result.assessed == 2
     assert store.get_item("test", "INBOX", 77, 1).status == "needs_attention"
     assert store.get_item("test", "INBOX", 77, 2).status == "assessed"
+
+
+GERMAN_SPAM = (
+    "From: konto@bank.example.test\r\n"
+    "Subject: Ihr Konto wurde gesperrt\r\n"
+    "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+    "Sehr geehrter Kunde, Ihr Konto wurde vorübergehend gesperrt. Bitte bestätigen Sie "
+    "Ihre Daten innerhalb von 24 Stunden, um eine Schließung zu vermeiden."
+).encode()
+
+
+class _CountingAssessor:
+    def __init__(self, assessment: Assessment) -> None:
+        self.assessment = assessment
+        self.calls = 0
+
+    def assess(self, prepared: object) -> Assessment:
+        self.calls += 1
+        return self.assessment
+
+
+def _gate_setup(
+    tmp_path: Path, mode: str, *, moves: bool = True
+) -> tuple[Config, StateStore, LocalGate, _FakeMailbox]:
+    gate_config = GateConfig(mode=mode, allowed_languages=("en", "nb", "nn", "da", "sv"))
+    config = _config(tmp_path / "state.sqlite3", moves=moves, gate=gate_config)
+    store = StateStore(config.database_path)
+    gate = LocalGate(config.gate, config.policy, store)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor(), gate=gate)
+    return config, store, gate, mailbox
+
+
+def test_enforce_mode_decides_locally_without_calling_jev(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "enforce")
+    mailbox.boxes["INBOX"][1] = (GERMAN_SPAM, False)
+    assessor = _CountingAssessor(Assessment(0.0, 0.0, "jev-latest", "email-v1"))
+    result = run_cycle(config, store, mailbox, assessor, gate=gate)
+    assert assessor.calls == 0
+    assert result.moved == 1
+    item = store.get_item("test", "INBOX", 77, 1)
+    assert item.local_verdict == "spam"
+    assert item.local_reason == "language_not_allowed"
+    # Local verdicts are never fed back as training data.
+    assert store.gate_totals()["spam_examples"] == 0
+
+
+def test_shadow_mode_records_local_verdict_but_jev_decides(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow")
+    mailbox.boxes["INBOX"][1] = (GERMAN_SPAM, False)
+    assessor = _CountingAssessor(Assessment(0.01, 0.0, "jev-latest", "email-v1"))
+    result = run_cycle(config, store, mailbox, assessor, gate=gate)
+    assert assessor.calls == 1
+    assert result.moved == 0
+    item = store.get_item("test", "INBOX", 77, 1)
+    assert (item.local_verdict, item.local_reason) == ("spam", "language_not_allowed")
+    assert store.status_counts("test")["INBOX"]["local_disagree"] == 1
+    # A confidently clean Jev result is learned as ham.
+    assert store.gate_totals()["ham_examples"] == 1
+
+
+def test_jev_move_decision_is_learned_as_spam(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow")
+    _add_message(mailbox, 1)
+    run_cycle(config, store, mailbox, _FakeAssessor(), gate=gate)
+    assert store.gate_totals()["spam_examples"] == 1
+
+
+def test_learning_from_jev_can_be_disabled(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow")
+    config = replace(config, gate=replace(config.gate, learn_from_jev=False))
+    _add_message(mailbox, 1)
+    run_cycle(config, store, mailbox, _FakeAssessor(), gate=gate)
+    assert store.gate_totals()["spam_examples"] == 0
+
+
+def test_message_restored_by_user_is_not_moved_again_even_with_gate_off(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=True)
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    _add_message(mailbox, 1)
+    assert run_cycle(config, store, mailbox, _FakeAssessor()).moved == 1
+
+    # The user drags the message from Jev Review back to the inbox: it gets a new UID.
+    mailbox.boxes["INBOX"][2] = mailbox.boxes["Jev Review"].pop(1)
+    assessor = _CountingAssessor(Assessment(0.99, 0.1, "jev-latest", "email-v1"))
+    result = run_cycle(config, store, mailbox, assessor)
+    assert assessor.calls == 0
+    assert result.moved == 0
+    assert 2 in mailbox.boxes["INBOX"]
+    item = store.get_item("test", "INBOX", 77, 2)
+    assert (item.local_verdict, item.local_reason) == ("clean", "user_restored")
+
+
+def _raw(sender: str, subject: str, body: str, to: str = "me@example.test") -> bytes:
+    return (
+        f"From: {sender}\r\nTo: {to}\r\nSubject: {subject}\r\n"
+        f"Content-Type: text/plain; charset=utf-8\r\n\r\n{body}"
+    ).encode()
+
+
+def test_training_reads_folders_once_and_counts_corrections(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow", moves=False)
+    _add_message(mailbox, 1)
+    # Jev leaves this message alone, then the user files it as junk: a correction.
+    run_cycle(config, store, mailbox, _CountingAssessor(Assessment(0.2, 0.0, "j", "e")), gate=gate)
+    mailbox.boxes["Spam"] = {1: (MESSAGE, False), 2: (_raw("x@y.test", "Win", "big prize"), False)}
+    mailbox.boxes["Archive"] = {1: (_raw("boss@work.test", "Plan", "see agenda"), False)}
+    mailbox.boxes["Sent"] = {
+        1: (_raw("me@example.test", "Re", "ok", to="Pal <Pal@Example.test>, b@c.test"), False)
+    }
+
+    result = run_training(config, store, mailbox, gate, 100)
+    assert (result.spam, result.ham, result.corrections) == (2, 1, 1)
+    assert result.correspondents == 2
+    assert result.missing_folders == []
+    assert all(mailbox.selected != folder or mailbox.readonly for folder in mailbox.boxes)
+    assert not training_due(config, store)
+
+    again = run_training(config, store, mailbox, gate, 100)
+    assert (again.spam, again.ham, again.correspondents) == (0, 0, 0)
+
+
+def test_training_reports_missing_folders_and_validates_limit(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow", moves=False)
+    result = run_training(config, store, mailbox, gate, 10)
+    assert result.missing_folders == ["Spam", "Archive", "Sent"]
+    with pytest.raises(ConfigurationError):
+        run_training(config, store, mailbox, gate, 0)
+
+
+def test_training_is_due_only_when_gate_enabled(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=False)
+    store = StateStore(config.database_path)
+    assert not training_due(config, store)
+    enabled = replace(config, gate=GateConfig(mode="shadow", train_interval_seconds=60))
+    assert training_due(enabled, store, now=1000.0)
+    store.set_gate_meta("last_trained_at", 990.0)
+    assert not training_due(enabled, store, now=1000.0)
+    assert training_due(enabled, store, now=1050.0)

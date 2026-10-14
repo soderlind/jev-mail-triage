@@ -15,11 +15,14 @@ By default it only **records** the answers (dry-run). Messages are moved to a
 Apple Mail shows any moves automatically, because it is connected to the same
 Bridge account.
 
+An optional [local gate](#local-gate) decides the obvious cases on your Mac, so
+fewer messages need to be sent to TypeSafe.
+
 > [!IMPORTANT]
-> **Privacy:** for each assessed message, the sender, subject, a shortened text
-> body, and link addresses are sent to TypeSafe. That data leaves Proton's
+> **Privacy:** for each message assessed by Jev, the sender, subject, a shortened
+> text body, and link addresses are sent to TypeSafe. That data leaves Proton's
 > end-to-end encrypted environment. Use this tool only if you are comfortable
-> with that.
+> with that. Messages decided by the local gate in `enforce` mode are not sent.
 
 ## What you need
 
@@ -140,6 +143,7 @@ got them right.
 | `backfill --limit N`              | Assesses up to N existing messages, newest first (max 1,000)  | Only if moves are enabled   |
 | `backfill --limit N --dry-run`    | Same, but never moves anything                                | Never                       |
 | `retry --limit N`                 | Tries failed assessments again                                | No (they are re-queued)     |
+| `train --limit N`                 | Trains the local gate from your folders (default 500 per folder) | Never (read-only)        |
 | `evaluate --labels FILE.csv`      | Measures accuracy against labelled test emails                | No                          |
 | `secret set NAME`                 | Stores a secret in Keychain                                   | No                          |
 
@@ -160,6 +164,9 @@ Useful options:
 - **`assessed`** — the message was checked.
 - **`move_decision`** — Jev scored it at or above a threshold. In dry-run mode
   this means "would have moved", **not** that it was moved.
+- **`local_spam` / `local_clean`** (in `status`) — the local gate's verdicts.
+  **`local_disagree`** counts messages where the local gate and the final
+  decision disagreed; watch it while in shadow mode.
 - **`baseline` / `rebaseline`** — the service recorded a new starting point and
   skipped existing mail. A rebaseline happens when the mailbox identity changes,
   for example after removing and re-adding the account in Bridge.
@@ -197,10 +204,69 @@ When moves are enabled:
 - Uncertain and clean messages stay where they are.
 - Messages whose content was too large to send in full are never moved.
 - **Nothing is ever deleted.** Check `Jev Review` and move any mistakes back.
+  A message you move back to the Inbox is recognised and left alone; it is not
+  assessed or moved again. If the local gate is on, it also learns from this.
 
 > [!NOTE]
 > Changing thresholds affects future assessments only. Messages that were
 > already assessed are not rescored.
+
+## Local gate
+
+The local gate is a small filter that runs on your Mac before Jev. It answers
+only when it is confident and passes everything else to Jev. Checks run in this
+order:
+
+1. **Header checks.** With a trusted DMARC pass (see
+   [Allowlist](#allowlist-advanced)), mail from your allowlist or from someone you
+   have written to (a *known correspondent*, learned from your Sent folder) is
+   clean.
+2. **Allowed languages.** If `allowed_languages` is set, mail written mostly in
+   other languages is spam. Detection runs locally with
+   [Lingua](https://github.com/pemistahl/lingua-py) and checks each sentence, so
+   an English mail with a German signature is still allowed. Very short messages
+   are not judged. The rule is skipped (the message goes to Jev) for people you
+   have written to and for sender domains that often appear in your kept mail.
+3. **Near-duplicates of your junk.** Mail that is almost identical to something
+   in your Spam folder is spam, unless it also matches mail you kept.
+4. **Bayes filter.** A word-statistics filter trained on your Spam and Archive
+   folders, corrections, and confident Jev results. It gives verdicts only after
+   it has seen `min_examples` of each kind. It marks mail clean only if the
+   sender's domain often appears in your kept mail, the mail does not fail
+   DMARC, and every link points to a site seen in your kept mail.
+
+Local spam verdicts are handled like Jev's: they go to `Jev Review` only when
+moves are enabled.
+
+### Modes
+
+Set `mode` in the `[gate]` section:
+
+- **`off`** — the gate is not used; every message goes to Jev.
+- **`shadow`** (recommended start) — the gate records what it would have
+  decided, but Jev still decides and every message is still sent to TypeSafe.
+- **`enforce`** — confident local verdicts are used and those messages are
+  **not** sent to TypeSafe.
+
+Before switching to `enforce`, run `train`, let `serve` run in shadow mode for a
+while, and check that `status` shows few `local_disagree`. Also check that
+`evaluate` reports no local false positives.
+
+### Training
+
+```sh
+.venv/bin/jev-mail-triage train
+```
+
+`train` reads your Spam, Archive, and Sent folders read-only (unread mail stays
+unread), newest first, and remembers what it has already read. Moving a message
+to Spam that was left in the Inbox counts as a correction, and so does moving a
+message to Archive that was sent to review. Corrections count three times as
+much as ordinary examples. `train` cannot run while `serve` is running; `serve`
+retrains automatically every `train_interval_seconds`.
+
+Folder names must match what Bridge shows; missing folders are reported and
+skipped.
 
 ## Troubleshooting
 
@@ -324,7 +390,11 @@ Paths are relative to the CSV. Then run:
 
 The report shows false positives, precision, recall (for spam, scam/phishing,
 and combined), and how many messages would be sent for review. It uses your
-configured thresholds and model.
+configured thresholds and model. If the local gate is on, a `local_gate` line
+shows how many files it decided and any local false positives (spam verdicts on
+clean files) or missed spam (clean verdicts on spam or phishing files). In
+`enforce` mode, the other figures use the local verdicts too. `evaluate` never
+trains the gate.
 
 Each file is sent to TypeSafe and may use API credits. Use synthetic or
 otherwise approved emails, not real inbox messages.
@@ -356,13 +426,19 @@ otherwise approved emails, not real inbox messages.
   separate spam from subscribed newsletters, receipts, and genuine
   correspondence. A link alone is not considered malicious. Norwegian and
   English are supported.
+- The local gate runs entirely on your Mac; language detection uses no network.
 
 **Local storage**
 
 - The database (`~/Library/Application Support/jev-mail-triage/state.sqlite3`)
   stores message identifiers, a content fingerprint, Message-ID, scores,
-  model/policy versions, retry state, and move history. It **does not** store
-  bodies, subjects, or senders.
+  model/policy versions, local gate verdicts, retry state, and move history. It
+  **does not** store bodies, subjects, or senders.
+- If the local gate is on, the database also stores its model: counts of hashed
+  words and link domains, short similarity signatures of training messages, and
+  hashed addresses of people you have written to. No readable text is stored,
+  but someone with the file could test whether a guessed word or address
+  appears in it.
 - Database and lock files are readable only by your user account.
 - The Bridge password and TypeSafe API key are stored only in macOS Keychain.
 - Logs contain status information and message numbers only, never credentials
@@ -393,6 +469,17 @@ otherwise approved emails, not real inbox messages.
 |             | `model`                 | `jev-latest`           | TypeSafe model                                        |
 |             | `allowlist`             | `[]`                   | Trusted senders; see below                            |
 |             | `trusted_authserv_id`   | *(unset)*              | Required for the allowlist                            |
+| `[gate]`    | `mode`                  | `off`                  | `off`, `shadow`, or `enforce`; see [Local gate](#local-gate) |
+|             | `allowed_languages`     | `[]` (no rule)         | ISO 639-1 codes; other languages are spam. `no` = `nb` + `nn` |
+|             | `spam_folders`          | `["Spam"]`             | Training folders with junk                            |
+|             | `ham_folders`           | `["Archive"]`          | Training folders with mail you kept                   |
+|             | `sent_folders`          | `["Sent"]`             | Source of known correspondents                        |
+|             | `min_examples`          | `50`                   | Spam and kept examples needed before Bayes verdicts   |
+|             | `bayes_spam_threshold`  | `0.99`                 | Bayes score for a local spam verdict                  |
+|             | `bayes_clean_threshold` | `0.01`                 | Bayes score for a local clean verdict                 |
+|             | `near_duplicate_similarity` | `0.85`             | Similarity to junk for a near-duplicate               |
+|             | `learn_from_jev`        | `true`                 | Learn from confident Jev results                      |
+|             | `train_interval_seconds`| `3600`                 | How often `serve` retrains; `0` disables              |
 
 ### Allowlist (advanced)
 
@@ -402,6 +489,10 @@ reports DMARC pass. Proton does not document that it adds or cleans these
 headers, so configure this only if you have independently verified that the
 named receiver is trusted and replaces forged headers. Missing or untrusted
 authentication evidence never prevents a move.
+
+The local gate's known-correspondent check uses the same trusted DMARC pass.
+Without `trusted_authserv_id`, both header checks are skipped. A contact whose
+account is compromised can still pass these checks.
 
 ### Mailbox resets
 

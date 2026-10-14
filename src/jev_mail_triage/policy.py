@@ -6,7 +6,7 @@ from .config import PolicyConfig
 from .models import Assessment, Decision, Outcome, PreparedMessage
 
 
-def _allowlisted(sender: str, allowlist: tuple[str, ...]) -> bool:
+def is_allowlisted(sender: str, allowlist: tuple[str, ...]) -> bool:
     _, address = parseaddr(sender)
     address = address.casefold()
     if not address or "@" not in address:
@@ -25,10 +25,10 @@ def _allowlisted(sender: str, allowlist: tuple[str, ...]) -> bool:
 def decide(prepared: PreparedMessage, assessment: Assessment, config: PolicyConfig) -> Decision:
     if prepared.truncated:
         return Decision(Outcome.LEAVE, "truncated_input")
-    if _allowlisted(prepared.sender, config.allowlist) and prepared.trusted_dmarc_pass:
+    if is_allowlisted(prepared.sender, config.allowlist) and prepared.trusted_dmarc_pass:
         return Decision(Outcome.LEAVE, "authenticated_allowlist")
     if assessment.spam_score >= config.spam_threshold:
-        return Decision(Outcome.MOVE, "spam_threshold")
+        return Decision(Outcome.MOVE, assessment.reason or "spam_threshold")
     if assessment.scam_score >= config.scam_threshold:
-        return Decision(Outcome.MOVE, "scam_threshold")
-    return Decision(Outcome.LEAVE, "below_threshold")
+        return Decision(Outcome.MOVE, assessment.reason or "scam_threshold")
+    return Decision(Outcome.LEAVE, assessment.reason or "below_threshold")

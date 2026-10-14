@@ -119,6 +119,8 @@ def test_schema_v1_is_upgraded_without_dropping_existing_message_rows(
     columns = {row[1] for row in upgraded.execute("PRAGMA table_info(messages)")}
     existing = upgraded.execute("SELECT status FROM messages WHERE uid=1").fetchone()[0]
     upgraded.close()
-    assert version == 2
-    assert {"decision_outcome", "decision_reason"}.issubset(columns)
+    assert version == 3
+    assert {"decision_outcome", "decision_reason", "local_verdict", "local_reason"}.issubset(
+        columns
+    )
     assert existing == "assessed"

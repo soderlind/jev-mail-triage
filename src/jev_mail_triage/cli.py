@@ -15,17 +15,26 @@ from typesafe_sdk import RetryPolicy, TypeSafeClient
 from .classifier import JevAssessor
 from .config import DEFAULT_CONFIG_PATH, Config, load_config
 from .errors import ConfigurationError, RetryableError, TriageError
+from .gate import LocalGate, verdict_assessment
 from .imap_client import BridgeImap
 from .keychain import get_bridge_password, get_typesafe_api_key, set_secret
 from .lock import ProcessLock
 from .message import prepare_message
-from .models import Outcome
+from .models import LocalLabel, Outcome
 from .policy import decide
-from .service import run_backfill, run_cycle
+from .service import (
+    LAST_TRAINED_KEY,
+    TrainingResult,
+    run_backfill,
+    run_cycle,
+    run_training,
+    training_due,
+)
 from .state import StateStore
 
 logger = logging.getLogger("jev_mail_triage")
 T = TypeVar("T")
+_SERVE_TRAINING_LIMIT = 200
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -57,6 +66,14 @@ def _parser() -> argparse.ArgumentParser:
         "--headers",
         action="store_true",
         help="Explicitly fetch identifying headers from Bridge, read-only; no TypeSafe calls.",
+    )
+
+    train = commands.add_parser(
+        "train",
+        help="Train the local gate from your Spam, ham, and Sent folders (read-only).",
+    )
+    train.add_argument(
+        "--limit", type=int, default=500, help="Maximum new messages per folder (1-5000)."
     )
 
     retry = commands.add_parser("retry", help="Re-queue failed assessments for explicit retry.")
@@ -98,15 +115,49 @@ def _with_bridge(config: Config, operation: Callable[[BridgeImap], T]) -> T:
     raise AssertionError("Bridge retry loop exited without a result.")
 
 
+def _gate(config: Config, store: StateStore) -> LocalGate | None:
+    return LocalGate(config.gate, config.policy, store) if config.gate.enabled else None
+
+
+def _print_training(result: TrainingResult) -> None:
+    print(
+        f"trained spam={result.spam} ham={result.ham} corrections={result.corrections} "
+        f"new_correspondents={result.correspondents} skipped={result.skipped}"
+    )
+    if result.missing_folders:
+        print(f"missing folders (skipped): {', '.join(result.missing_folders)}")
+
+
+def _train(config: Config, limit: int) -> None:
+    if not 1 <= limit <= 5000:
+        raise ConfigurationError("Training limit must be between 1 and 5000.")
+    with ProcessLock(config.database_path):
+        store = StateStore(config.database_path)
+        gate = LocalGate(config.gate, config.policy, store)
+        result = _with_bridge(
+            config, lambda mailbox: run_training(config, store, mailbox, gate, limit)
+        )
+        totals = store.gate_totals()
+    _print_training(result)
+    print(
+        f"model spam_examples={int(totals['spam_examples'])} "
+        f"ham_examples={int(totals['ham_examples'])} "
+        f"correspondents={int(totals['correspondents'])}"
+    )
+    if not config.gate.enabled:
+        print("Note: [gate] mode is 'off'; set it to 'shadow' to start using the local gate.")
+
+
 def _run_cycle(config: Config, *, force_dry_run: bool) -> None:
     with ProcessLock(config.database_path):
         store = StateStore(config.database_path)
+        gate = _gate(config, store)
         with _assessor(config) as client:
             assessor = JevAssessor(client, model=config.policy.model)
             result = _with_bridge(
                 config,
                 lambda mailbox: run_cycle(
-                    config, store, mailbox, assessor, force_dry_run=force_dry_run
+                    config, store, mailbox, assessor, force_dry_run=force_dry_run, gate=gate
                 ),
             )
     print(
@@ -118,13 +169,17 @@ def _run_cycle(config: Config, *, force_dry_run: bool) -> None:
 def _serve(config: Config) -> None:
     with ProcessLock(config.database_path):
         store = StateStore(config.database_path)
+        gate = _gate(config, store)
         with _assessor(config) as client:
             assessor = JevAssessor(client, model=config.policy.model)
             while True:
                 started_at = time.monotonic()
+                if gate is not None and training_due(config, store):
+                    _serve_training(config, store, gate)
                 try:
                     result = _with_bridge(
-                        config, lambda mailbox: run_cycle(config, store, mailbox, assessor)
+                        config,
+                        lambda mailbox: run_cycle(config, store, mailbox, assessor, gate=gate),
                     )
                     logger.info(
                         "Cycle complete: baseline=%s discovered=%d assessed=%d moved=%d attention=%d",
@@ -142,11 +197,36 @@ def _serve(config: Config) -> None:
                 time.sleep(max(0.0, config.service.poll_interval_seconds - elapsed))
 
 
+def _serve_training(config: Config, store: StateStore, gate: LocalGate) -> None:
+    """Train in the background of serve; failures never block triage."""
+    try:
+        training = _with_bridge(
+            config,
+            lambda mailbox: run_training(config, store, mailbox, gate, _SERVE_TRAINING_LIMIT),
+        )
+    except TriageError as exc:
+        # Postpone the next attempt by a full interval instead of retrying every cycle.
+        store.set_gate_meta(LAST_TRAINED_KEY, time.time())
+        logger.warning("Local gate training skipped (%s).", type(exc).__name__)
+        return
+    logger.info(
+        "Local gate trained: spam=%d ham=%d corrections=%d new_correspondents=%d "
+        "skipped=%d missing_folders=%d",
+        training.spam,
+        training.ham,
+        training.corrections,
+        training.correspondents,
+        training.skipped,
+        len(training.missing_folders),
+    )
+
+
 def _backfill(config: Config, limit: int, *, force_dry_run: bool) -> None:
     if not 1 <= limit <= 1000:
         raise ConfigurationError("Backfill limit must be between 1 and 1000.")
     with ProcessLock(config.database_path):
         store = StateStore(config.database_path)
+        gate = _gate(config, store)
         with _assessor(config) as client:
             assessor = JevAssessor(client, model=config.policy.model)
             result = _with_bridge(
@@ -158,6 +238,7 @@ def _backfill(config: Config, limit: int, *, force_dry_run: bool) -> None:
                     assessor,
                     limit,
                     force_dry_run=force_dry_run,
+                    gate=gate,
                 ),
             )
     print(
@@ -176,10 +257,15 @@ def _status(config: Config, *, as_json: bool) -> None:
         return
     if not rows:
         print("No stored assessments.")
-        return
     for mailbox, statuses in rows.items():
         counts = " ".join(f"{status}={count}" for status, count in sorted(statuses.items()))
         print(f"{mailbox}: {counts}")
+    totals = store.gate_totals()
+    print(
+        f"local gate: mode={config.gate.mode} spam_examples={int(totals['spam_examples'])} "
+        f"ham_examples={int(totals['ham_examples'])} "
+        f"correspondents={int(totals['correspondents'])}"
+    )
 
 
 def _candidates(config: Config, limit: int, *, headers: bool, as_json: bool) -> None:
@@ -193,6 +279,9 @@ def _candidates(config: Config, limit: int, *, headers: bool, as_json: bool) -> 
             "spam_score": item.spam_score,
             "scam_score": item.scam_score,
             "decision_reason": item.decision_reason,
+            "model_version": item.model_version,
+            "local_verdict": item.local_verdict,
+            "local_reason": item.local_reason,
             "status": item.status,
             "truncated": item.truncated,
         }
@@ -323,6 +412,8 @@ def _evaluate(config: Config, labels_path: Path) -> None:
     expected_review: list[bool] = []
     predicted_review: list[bool] = []
     review_count = 0
+    gate = _gate(config, StateStore(config.database_path)) if config.gate.enabled else None
+    local_counts = {"spam": 0, "clean": 0, "deferred": 0, "false_positives": 0, "missed": 0}
 
     with _assessor(config) as client:
         assessor = JevAssessor(client, model=config.policy.model)
@@ -342,6 +433,18 @@ def _evaluate(config: Config, labels_path: Path) -> None:
             )
             assessment = assessor.assess(prepared)
             decision = decide(prepared, assessment, config.policy)
+            verdict = gate.evaluate(prepared) if gate is not None else None
+            if gate is not None:
+                if verdict is None:
+                    local_counts["deferred"] += 1
+                elif verdict.label == LocalLabel.SPAM:
+                    local_counts["spam"] += 1
+                    local_counts["false_positives"] += not (spam_label or scam_label)
+                else:
+                    local_counts["clean"] += 1
+                    local_counts["missed"] += spam_label or scam_label
+                if verdict is not None and config.gate.enforced:
+                    decision = decide(prepared, verdict_assessment(verdict), config.policy)
             spam_guess = assessment.spam_score >= config.policy.spam_threshold
             scam_guess = assessment.scam_score >= config.policy.scam_threshold
             review_guess = decision.outcome == Outcome.MOVE
@@ -362,6 +465,14 @@ def _evaluate(config: Config, labels_path: Path) -> None:
         false_positives, precision, recall = _metrics(expected, predicted)
         print(f"{name} {false_positives} {precision:.3f} {recall:.3f}")
     print(f"review_volume={review_count}/{len(rows)} ({review_count / len(rows):.1%})")
+    if gate is not None:
+        decided = local_counts["spam"] + local_counts["clean"]
+        print(
+            f"local_gate mode={config.gate.mode} decided_locally={decided}/{len(rows)} "
+            f"local_spam={local_counts['spam']} local_clean={local_counts['clean']} "
+            f"false_positives={local_counts['false_positives']} "
+            f"missed_spam_or_scam={local_counts['missed']}"
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -390,6 +501,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _backfill(config, args.limit, force_dry_run=args.dry_run)
         elif args.command == "retry":
             _retry(config, args.limit)
+        elif args.command == "train":
+            _train(config, args.limit)
         elif args.command == "evaluate":
             _evaluate(config, args.labels)
         return 0

@@ -5,7 +5,7 @@ import re
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 from html.parser import HTMLParser
 
 from .errors import PermanentMessageError
@@ -13,6 +13,8 @@ from .models import PreparedMessage
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _DMARC_PASS_RE = re.compile(r"(?:^|[;\s])dmarc\s*=\s*pass(?:[;\s]|$)", re.IGNORECASE)
+_DMARC_FAIL_RE = re.compile(r"(?:^|[;\s])dmarc\s*=\s*fail(?:[;\s]|$)", re.IGNORECASE)
+_MAX_LOCAL_BODY_CHARS = 200_000
 _SKIP_HTML_TAGS = {"script", "style", "template", "iframe", "noscript"}
 
 
@@ -109,15 +111,29 @@ def _links(message: Message, body: str) -> list[str]:
     return list(dict.fromkeys(link.strip() for link in links if link.strip()))
 
 
-def _has_trusted_dmarc_pass(message: Message, trusted_authserv_id: str | None) -> bool:
+def _has_trusted_dmarc(
+    message: Message, trusted_authserv_id: str | None, pattern: re.Pattern[str]
+) -> bool:
     if trusted_authserv_id is None:
         return False
     for header in message.get_all("Authentication-Results", []):
         value = str(header).replace("\r\n", " ").replace("\n", " ").strip()
         authserv_id = value.partition(";")[0].strip().casefold()
-        if authserv_id == trusted_authserv_id and _DMARC_PASS_RE.search(value):
+        if authserv_id == trusted_authserv_id and pattern.search(value):
             return True
     return False
+
+
+def recipient_addresses(raw_message: bytes) -> list[str]:
+    """Return casefolded To/Cc/Bcc addresses, used to learn known correspondents."""
+    try:
+        parsed = BytesParser(policy=policy.default).parsebytes(raw_message, headersonly=True)
+        values = [str(value) for name in ("To", "Cc", "Bcc") for value in parsed.get_all(name, [])]
+    except (ValueError, TypeError, UnicodeError) as exc:
+        raise PermanentMessageError("Could not parse recipient headers.") from exc
+    return sorted(
+        {address.strip().casefold() for _, address in getaddresses(values) if "@" in address}
+    )
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
@@ -165,10 +181,11 @@ def prepare_message(
     )
     bounded_prompt, input_truncated = _truncate_utf8(prompt, max_input_bytes)
     truncated = input_truncated or raw_truncated
+    raw_hash = hashlib.sha256(raw_message)
     digest = hashlib.sha256(
         bounded_prompt.encode("utf-8")
         + b"\0"
-        + hashlib.sha256(raw_message).digest()
+        + raw_hash.digest()
         + b"\0"
         + str(truncated).encode("ascii")
     ).hexdigest()
@@ -180,5 +197,10 @@ def prepare_message(
         fingerprint=digest,
         truncated=truncated,
         input_bytes=len(bounded_prompt.encode("utf-8")),
-        trusted_dmarc_pass=_has_trusted_dmarc_pass(parsed, trusted_authserv_id),
+        trusted_dmarc_pass=_has_trusted_dmarc(parsed, trusted_authserv_id, _DMARC_PASS_RE),
+        trusted_dmarc_fail=_has_trusted_dmarc(parsed, trusted_authserv_id, _DMARC_FAIL_RE),
+        sender_address=sender_address.strip().casefold(),
+        body=body[:_MAX_LOCAL_BODY_CHARS],
+        links=tuple(links),
+        raw_digest=raw_hash.hexdigest(),
     )

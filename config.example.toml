@@ -26,3 +26,25 @@ model = "jev-latest"
 # Set only to a receiver Authentication-Results authserv-id you trust.
 # trusted_authserv_id = "replace-with-trusted-receiver-id"
 allowlist = []
+
+# Local gate: decides confident cases on this Mac and sends only the rest to Jev.
+# Checks run in order: authenticated allowlist / known correspondents, allowed
+# languages, near-duplicates of your junk, then a Bayes filter trained on your folders.
+[gate]
+# "off", "shadow" (record local verdicts, Jev still decides), or "enforce"
+# (confident local verdicts skip Jev). Stay in shadow until `status` shows few
+# local_disagree and `evaluate` shows no false positives.
+mode = "shadow"
+# Mail written mostly in other languages is treated as spam. "no" means nb + nn.
+# Leave empty to disable the language rule.
+allowed_languages = ["en", "nb", "nn", "da", "sv"]
+# Read-only training sources. Folder names as shown by Proton Mail Bridge.
+spam_folders = ["Spam"]
+ham_folders = ["Archive"]
+sent_folders = ["Sent"] # Recipients you write to become known correspondents.
+min_examples = 50 # Per class, before the Bayes filter gives verdicts.
+bayes_spam_threshold = 0.99
+bayes_clean_threshold = 0.01
+near_duplicate_similarity = 0.85
+learn_from_jev = true # Learn from confident Jev results.
+train_interval_seconds = 3600 # serve retrains this often; 0 disables.

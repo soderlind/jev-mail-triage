@@ -217,3 +217,86 @@ def test_bridge_failure_attempts_stop_at_configured_limit(
     with pytest.raises(RetryableError):
         cli._with_bridge(_config(tmp_path), lambda _mailbox: "unreachable")
     assert _Bridge.attempts == 3
+
+
+def test_train_reads_folders_and_prints_model_totals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dataclasses import replace
+
+    from jev_mail_triage.config import GateConfig
+    from jev_mail_triage.imap_client import FetchedMessage
+
+    config = replace(_config(tmp_path), gate=GateConfig(mode="shadow"))
+    raw = b"From: a@spam.test\r\nTo: me@example.test\r\nSubject: Win\r\n\r\nbig prize now"
+
+    class Bridge:
+        selected = ""
+
+        def list_mailboxes(self) -> list[str]:
+            return ["INBOX", "Spam", "Sent"]
+
+        def select(self, mailbox: str, *, readonly: bool = True) -> tuple[int, int]:
+            assert readonly
+            self.selected = mailbox
+            return 5, 2
+
+        def search_uids(self, start_uid: int | None = None) -> list[int]:
+            return [1]
+
+        def fetch_uid(self, uid: int) -> FetchedMessage:
+            return FetchedMessage(raw, False)
+
+    monkeypatch.setattr(cli, "_with_bridge", lambda _config, operation: operation(Bridge()))
+    cli._train(config, 10)
+    output = capsys.readouterr().out
+    assert "trained spam=1 ham=0 corrections=0 new_correspondents=1 skipped=0" in output
+    assert "missing folders (skipped): Archive" in output
+    assert "model spam_examples=1 ham_examples=0 correspondents=1" in output
+
+    cli._status(config, as_json=False)
+    assert "local gate: mode=shadow spam_examples=1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("limit", [0, 5001])
+def test_train_rejects_invalid_limit(tmp_path: Path, limit: int) -> None:
+    with pytest.raises(ConfigurationError):
+        cli._train(_config(tmp_path), limit)
+
+
+def test_evaluate_reports_local_gate_without_learning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    from jev_mail_triage.config import GateConfig
+
+    config = replace(
+        _config(tmp_path), gate=GateConfig(mode="enforce", allowed_languages=("en", "nb"))
+    )
+    german = (
+        "From: konto@bank.test\r\nSubject: Konto gesperrt\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        "Sehr geehrter Kunde, Ihr Konto wurde vorübergehend gesperrt. Bitte bestätigen Sie "
+        "Ihre Daten innerhalb von 24 Stunden, um eine Schließung zu vermeiden."
+    )
+    (tmp_path / "german.eml").write_text(german, encoding="utf-8")
+    (tmp_path / "labels.csv").write_text(
+        "path,spam,scam_phishing\ngerman.eml,1,1\n", encoding="utf-8"
+    )
+
+    class Assessor:
+        def __init__(self, _client: object, *, model: str) -> None:
+            pass
+
+        def assess(self, _prepared: object) -> Assessment:
+            return Assessment(0.0, 0.0, "jev-latest", "email-v1")
+
+    monkeypatch.setattr(cli, "_assessor", lambda _config: nullcontext(None))
+    monkeypatch.setattr(cli, "JevAssessor", Assessor)
+    cli._evaluate(config, tmp_path / "labels.csv")
+    output = capsys.readouterr().out
+    assert "review_volume=1/1" in output
+    assert "decided_locally=1/1 local_spam=1 local_clean=0 false_positives=0" in output
+    assert StateStore(config.database_path).gate_totals()["spam_examples"] == 0

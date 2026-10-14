@@ -8,9 +8,11 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .errors import ConfigurationError
-from .models import Assessment, Decision, MailItem
+from .models import Assessment, Decision, LocalLabel, LocalVerdict, MailItem
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+LOCAL_MODEL_VERSION = "local-gate"
+_SQL_CHUNK = 500
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -51,7 +53,7 @@ class StateStore:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             current_version = int(db.execute("PRAGMA user_version").fetchone()[0])
-            if current_version not in {0, 1, SCHEMA_VERSION}:
+            if current_version not in {0, 1, 2, SCHEMA_VERSION}:
                 raise ConfigurationError(
                     f"Unsupported SQLite schema version {current_version}; expected "
                     f"{SCHEMA_VERSION}."
@@ -88,6 +90,8 @@ class StateStore:
                     destination_uid INTEGER,
                     destination_before TEXT,
                     last_error TEXT,
+                    local_verdict TEXT,
+                    local_reason TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     PRIMARY KEY (account_id, mailbox, uid_validity, uid)
@@ -97,11 +101,51 @@ class StateStore:
                     ON messages(account_id, mailbox, status, next_attempt_at, uid);
                 CREATE INDEX IF NOT EXISTS messages_assessed
                     ON messages(account_id, mailbox, status, uid);
+
+                -- Local gate model: aggregate hashed-token weights, never message text.
+                CREATE TABLE IF NOT EXISTS gate_tokens (
+                    token INTEGER PRIMARY KEY,
+                    spam REAL NOT NULL DEFAULT 0,
+                    ham REAL NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS gate_examples (
+                    example_key TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    weight REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    signature BLOB,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS gate_correspondents (
+                    address_hash TEXT PRIMARY KEY,
+                    updated_at REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS gate_seen (
+                    account_id TEXT NOT NULL,
+                    folder TEXT NOT NULL,
+                    uid_validity INTEGER NOT NULL,
+                    uid INTEGER NOT NULL,
+                    PRIMARY KEY (account_id, folder, uid_validity, uid)
+                );
+
+                CREATE TABLE IF NOT EXISTS gate_meta (
+                    key TEXT PRIMARY KEY,
+                    value REAL NOT NULL
+                );
                 """
             )
-            if current_version == 1:
-                db.execute("ALTER TABLE messages ADD COLUMN decision_outcome TEXT")
-                db.execute("ALTER TABLE messages ADD COLUMN decision_reason TEXT")
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(messages)")}
+            for column in ("decision_outcome", "decision_reason", "local_verdict", "local_reason"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
+            if "fingerprint" in columns:
+                db.execute(
+                    "CREATE INDEX IF NOT EXISTS messages_fingerprint "
+                    "ON messages(account_id, fingerprint)"
+                )
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def synchronize_mailbox(
@@ -268,6 +312,7 @@ class StateStore:
         assessment: Assessment,
         decision: Decision,
         truncated: bool,
+        local_verdict: LocalVerdict | None = None,
     ) -> None:
         with self._connect() as db:
             db.execute(
@@ -275,7 +320,7 @@ class StateStore:
                 UPDATE messages
                 SET message_id=?, fingerprint=?, spam_score=?, scam_score=?,
                     decision_outcome=?, decision_reason=?, model_version=?, policy_version=?,
-                    truncated=?, status='assessed',
+                    truncated=?, local_verdict=?, local_reason=?, status='assessed',
                     attempts=0, next_attempt_at=NULL, last_error=NULL, updated_at=?
                 WHERE account_id=? AND mailbox=? AND uid_validity=? AND uid=?
                 """,
@@ -289,6 +334,8 @@ class StateStore:
                     assessment.model_version,
                     assessment.policy_version,
                     int(truncated),
+                    local_verdict.label.value if local_verdict else None,
+                    local_verdict.reason if local_verdict else None,
                     time.time(),
                     item.account_id,
                     item.mailbox,
@@ -533,6 +580,21 @@ class StateStore:
                 """,
                 (account_id,),
             ).fetchall()
+            local = db.execute(
+                """
+                SELECT mailbox,
+                    SUM(local_verdict='spam') AS local_spam,
+                    SUM(local_verdict='clean') AS local_clean,
+                    SUM(local_verdict IS NOT NULL AND model_version=?) AS local_decided,
+                    SUM(local_verdict IS NOT NULL AND model_version<>?
+                        AND ((local_verdict='spam' AND decision_outcome='leave')
+                          OR (local_verdict='clean' AND decision_outcome='move'))) AS local_disagree
+                FROM messages
+                WHERE account_id=? AND local_verdict IS NOT NULL
+                GROUP BY mailbox ORDER BY mailbox
+                """,
+                (LOCAL_MODEL_VERSION, LOCAL_MODEL_VERSION, account_id),
+            ).fetchall()
         result: dict[str, Counter[str]] = {}
         for row in rows:
             mailbox = str(row["mailbox"])
@@ -540,7 +602,197 @@ class StateStore:
         for row in candidates:
             mailbox = str(row["mailbox"])
             result.setdefault(mailbox, Counter())["move_decision"] = int(row["count"])
+        for row in local:
+            counter = result.setdefault(str(row["mailbox"]), Counter())
+            for key in ("local_spam", "local_clean", "local_decided", "local_disagree"):
+                if row[key]:
+                    counter[key] = int(row[key])
         return result
+
+    def was_moved(self, account_id: str, fingerprint: str) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT 1 FROM messages
+                WHERE account_id=? AND fingerprint=? AND status='moved' LIMIT 1
+                """,
+                (account_id, fingerprint),
+            ).fetchone()
+        return row is not None
+
+    def latest_decision(self, account_id: str, fingerprint: str) -> str | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT decision_outcome FROM messages
+                WHERE account_id=? AND fingerprint=? AND decision_outcome IS NOT NULL
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (account_id, fingerprint),
+            ).fetchone()
+        return str(row["decision_outcome"]) if row else None
+
+    def gate_totals(self) -> dict[str, float]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT label, COUNT(*) AS examples, SUM(weight) AS weight
+                FROM gate_examples GROUP BY label
+                """
+            ).fetchall()
+            correspondents = db.execute("SELECT COUNT(*) FROM gate_correspondents").fetchone()[0]
+        totals = {
+            "spam_examples": 0.0,
+            "spam_weight": 0.0,
+            "ham_examples": 0.0,
+            "ham_weight": 0.0,
+            "correspondents": float(correspondents),
+        }
+        for row in rows:
+            label = "spam" if row["label"] == LocalLabel.SPAM.value else "ham"
+            totals[f"{label}_examples"] = float(row["examples"])
+            totals[f"{label}_weight"] = float(row["weight"] or 0.0)
+        return totals
+
+    def token_weights(self, tokens: Iterable[int]) -> dict[int, tuple[float, float]]:
+        values = list(tokens)
+        result: dict[int, tuple[float, float]] = {}
+        with self._connect() as db:
+            for start in range(0, len(values), _SQL_CHUNK):
+                chunk = values[start : start + _SQL_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                for row in db.execute(
+                    f"SELECT token, spam, ham FROM gate_tokens WHERE token IN ({placeholders})",
+                    chunk,
+                ):
+                    result[int(row["token"])] = (float(row["spam"]), float(row["ham"]))
+        return result
+
+    def learn_example(
+        self,
+        example_key: str,
+        label: LocalLabel,
+        weight: float,
+        source: str,
+        signature: bytes | None,
+        tokens: Iterable[int],
+        *,
+        relabel_weight: float = 1.0,
+    ) -> str:
+        """Add or relabel one training example; returns added/reinforced/relabelled/unchanged.
+
+        Moving mail between a spam and a ham folder is a user correction, so a relabel is
+        stored with at least ``relabel_weight``.
+        """
+        token_list = list(tokens)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT label, weight FROM gate_examples WHERE example_key=?", (example_key,)
+            ).fetchone()
+            deltas: list[tuple[LocalLabel, float]] = []
+            if row is None:
+                outcome = "added"
+                deltas.append((label, weight))
+            elif row["label"] == label.value:
+                if weight <= float(row["weight"]):
+                    return "unchanged"
+                outcome = "reinforced"
+                deltas.append((label, weight - float(row["weight"])))
+            else:
+                outcome = "relabelled"
+                weight = max(weight, relabel_weight)
+                deltas.append((LocalLabel(row["label"]), -float(row["weight"])))
+                deltas.append((label, weight))
+            for delta_label, delta in deltas:
+                spam = delta if delta_label == LocalLabel.SPAM else 0.0
+                ham = delta if delta_label == LocalLabel.CLEAN else 0.0
+                # Deltas are passed twice: excluded.* would hold the clamped insert values,
+                # which would lose negative deltas when relabelling.
+                db.executemany(
+                    """
+                    INSERT INTO gate_tokens (token, spam, ham) VALUES (?, MAX(0, ?), MAX(0, ?))
+                    ON CONFLICT(token) DO UPDATE SET
+                        spam=MAX(0, spam + ?), ham=MAX(0, ham + ?)
+                    """,
+                    ((token, spam, ham, spam, ham) for token in token_list),
+                )
+            db.execute(
+                """
+                INSERT INTO gate_examples
+                    (example_key, label, weight, source, signature, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(example_key) DO UPDATE SET
+                    label=excluded.label, weight=excluded.weight, source=excluded.source,
+                    signature=excluded.signature, updated_at=excluded.updated_at
+                """,
+                (example_key, label.value, weight, source, signature, time.time()),
+            )
+        return outcome
+
+    def example_signatures(self) -> list[tuple[LocalLabel, bytes]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT label, signature FROM gate_examples WHERE signature IS NOT NULL"
+            ).fetchall()
+        return [(LocalLabel(row["label"]), bytes(row["signature"])) for row in rows]
+
+    def add_correspondents(self, address_hashes: Iterable[str]) -> int:
+        now = time.time()
+        added = 0
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for address_hash in set(address_hashes):
+                added += db.execute(
+                    "INSERT OR IGNORE INTO gate_correspondents VALUES (?, ?)",
+                    (address_hash, now),
+                ).rowcount
+        return added
+
+    def is_correspondent(self, address_hash: str) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM gate_correspondents WHERE address_hash=?", (address_hash,)
+            ).fetchone()
+        return row is not None
+
+    def unseen_training_uids(
+        self, account_id: str, folder: str, uid_validity: int, uids: Iterable[int]
+    ) -> list[int]:
+        with self._connect() as db:
+            seen = {
+                int(row["uid"])
+                for row in db.execute(
+                    """
+                    SELECT uid FROM gate_seen
+                    WHERE account_id=? AND folder=? AND uid_validity=?
+                    """,
+                    (account_id, folder, uid_validity),
+                )
+            }
+        return [uid for uid in uids if uid not in seen]
+
+    def mark_training_seen(self, account_id: str, folder: str, uid_validity: int, uid: int) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO gate_seen VALUES (?, ?, ?, ?)",
+                (account_id, folder, uid_validity, uid),
+            )
+
+    def gate_meta(self, key: str) -> float | None:
+        with self._connect() as db:
+            row = db.execute("SELECT value FROM gate_meta WHERE key=?", (key,)).fetchone()
+        return float(row["value"]) if row else None
+
+    def set_gate_meta(self, key: str, value: float) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO gate_meta (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (key, value),
+            )
 
     @classmethod
     def candidates(cls, path: Path, account_id: str, limit: int) -> list[MailItem]:
@@ -590,4 +842,6 @@ class StateStore:
             destination_uid=row["destination_uid"],
             destination_before=row["destination_before"],
             last_error=row["last_error"],
+            local_verdict=row["local_verdict"],
+            local_reason=row["local_reason"],
         )

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ConfigurationError
+from .language import normalize_language_codes
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config/jev-mail-triage/config.toml"
 DEFAULT_DATABASE_PATH = Path.home() / "Library/Application Support/jev-mail-triage/state.sqlite3"
@@ -43,12 +44,39 @@ class ServiceConfig:
     backoff_max_seconds: int
 
 
+GATE_MODES = frozenset({"off", "shadow", "enforce"})
+
+
+@dataclass(frozen=True)
+class GateConfig:
+    mode: str = "off"
+    allowed_languages: tuple[str, ...] = ()
+    spam_folders: tuple[str, ...] = ("Spam",)
+    ham_folders: tuple[str, ...] = ("Archive",)
+    sent_folders: tuple[str, ...] = ("Sent",)
+    min_examples: int = 50
+    bayes_spam_threshold: float = 0.99
+    bayes_clean_threshold: float = 0.01
+    near_duplicate_similarity: float = 0.85
+    learn_from_jev: bool = True
+    train_interval_seconds: int = 3600
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+    @property
+    def enforced(self) -> bool:
+        return self.mode == "enforce"
+
+
 @dataclass(frozen=True)
 class Config:
     bridge: BridgeConfig
     policy: PolicyConfig
     service: ServiceConfig
     database_path: Path
+    gate: GateConfig = GateConfig()
 
 
 def _table(raw: dict[str, Any], key: str) -> dict[str, Any]:
@@ -80,6 +108,63 @@ def _threshold(table: dict[str, Any], key: str, default: float) -> float:
     if not 0.0 <= threshold <= 1.0:
         raise ConfigurationError(f"Configuration value {key!r} must be between 0 and 1.")
     return threshold
+
+
+def _folders(table: dict[str, Any], key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = table.get(key, list(default))
+    if not isinstance(value, list) or any(
+        not isinstance(entry, str) or not entry.strip() for entry in value
+    ):
+        raise ConfigurationError(f"Configuration value {key!r} must be an array of folder names.")
+    return tuple(entry.strip() for entry in value)
+
+
+def _gate(raw: dict[str, Any]) -> GateConfig:
+    table = raw.get("gate", {})
+    if not isinstance(table, dict):
+        raise ConfigurationError("Configuration section [gate] must be a table.")
+    mode = _string(table, "mode", "off").casefold()
+    if mode not in GATE_MODES:
+        raise ConfigurationError("Gate mode must be 'off', 'shadow', or 'enforce'.")
+    languages = table.get("allowed_languages", [])
+    if not isinstance(languages, list):
+        raise ConfigurationError("Configuration value 'allowed_languages' must be an array.")
+    learn_from_jev = table.get("learn_from_jev", True)
+    if not isinstance(learn_from_jev, bool):
+        raise ConfigurationError("Configuration value 'learn_from_jev' must be true or false.")
+    gate = GateConfig(
+        mode=mode,
+        allowed_languages=normalize_language_codes(languages),
+        spam_folders=_folders(table, "spam_folders", GateConfig.spam_folders),
+        ham_folders=_folders(table, "ham_folders", GateConfig.ham_folders),
+        sent_folders=_folders(table, "sent_folders", GateConfig.sent_folders),
+        min_examples=_integer(table, "min_examples", GateConfig.min_examples),
+        bayes_spam_threshold=_threshold(
+            table, "bayes_spam_threshold", GateConfig.bayes_spam_threshold
+        ),
+        bayes_clean_threshold=_threshold(
+            table, "bayes_clean_threshold", GateConfig.bayes_clean_threshold
+        ),
+        near_duplicate_similarity=_threshold(
+            table, "near_duplicate_similarity", GateConfig.near_duplicate_similarity
+        ),
+        learn_from_jev=learn_from_jev,
+        train_interval_seconds=_integer(
+            table, "train_interval_seconds", GateConfig.train_interval_seconds
+        ),
+    )
+    if gate.min_examples < 1:
+        raise ConfigurationError("min_examples must be positive.")
+    if gate.bayes_clean_threshold >= gate.bayes_spam_threshold:
+        raise ConfigurationError("bayes_clean_threshold must be below bayes_spam_threshold.")
+    if gate.near_duplicate_similarity < 0.5:
+        raise ConfigurationError("near_duplicate_similarity must be at least 0.5.")
+    if gate.train_interval_seconds < 0:
+        raise ConfigurationError("train_interval_seconds must be zero or positive.")
+    overlap = set(gate.spam_folders) & (set(gate.ham_folders) | set(gate.sent_folders))
+    if overlap:
+        raise ConfigurationError("A folder cannot be both a spam and a ham/sent training folder.")
+    return gate
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -164,6 +249,15 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
                 "Bridge host must be localhost or a loopback IP address."
             ) from exc
 
+    gate = _gate(raw)
+    monitored = _string(bridge_raw, "mailbox", "INBOX")
+    for folder in gate.spam_folders + gate.ham_folders:
+        if folder.casefold() == monitored.casefold() or folder == policy.review_folder:
+            raise ConfigurationError(
+                f"Gate training folder {folder!r} must not be the monitored mailbox or the "
+                "review folder; they contain unreviewed mail."
+            )
+
     return Config(
         bridge=BridgeConfig(
             account_id=_string(bridge_raw, "account_id", None),
@@ -177,4 +271,5 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         policy=policy,
         service=service,
         database_path=Path(db_path_raw).expanduser(),
+        gate=gate,
     )

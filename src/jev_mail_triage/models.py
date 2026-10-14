@@ -14,6 +14,11 @@ class PreparedMessage:
     truncated: bool
     input_bytes: int
     trusted_dmarc_pass: bool
+    trusted_dmarc_fail: bool = False
+    sender_address: str = ""
+    body: str = ""
+    links: tuple[str, ...] = ()
+    raw_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,7 @@ class Assessment:
     scam_score: float
     model_version: str
     policy_version: str
+    reason: str | None = None
 
 
 class Outcome(StrEnum):
@@ -57,3 +63,16 @@ class MailItem:
     destination_uid: int | None
     destination_before: str | None
     last_error: str | None
+    local_verdict: str | None = None
+    local_reason: str | None = None
+
+
+class LocalLabel(StrEnum):
+    SPAM = "spam"
+    CLEAN = "clean"
+
+
+@dataclass(frozen=True)
+class LocalVerdict:
+    label: LocalLabel
+    reason: str
