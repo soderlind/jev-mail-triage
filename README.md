@@ -5,6 +5,11 @@ touching your mail until you say so.
 
 *An independent tool; not affiliated with or endorsed by Proton AG or TypeSafe.*
 
+<figure>
+  <img src="assets/stats.png" alt="Jev Mail Triage statistics view">
+  <figcaption>Statistics view in Jev Mail Triage</figcaption>
+</figure>
+
 Jev Mail Triage runs on your Mac, reads new messages through
 [Proton Mail Bridge](https://proton.me/mail/bridge), and asks
 [TypeSafe.ai's Jev model](https://docs.typesafe.ai/) two questions about each one:
@@ -140,6 +145,7 @@ got them right.
 | `poll`                            | Checks for new mail once                                      | Never                       |
 | `serve`                           | Checks for new mail every 60 seconds                          | Only if moves are enabled   |
 | `status`                          | Shows counts per status; no message content                   | No                          |
+| `stats`                           | Totals: spam, scam/phishing, moved, and who decided           | No                          |
 | `candidates`                      | Lists the 20 newest spam/phishing decisions (scores and IDs)  | No                          |
 | `candidates --headers`            | Same, plus subject, sender, and date fetched from Bridge      | No                          |
 | `backfill --limit N`              | Assesses up to N existing messages, newest first (max 1,000)  | Only if moves are enabled   |
@@ -154,7 +160,11 @@ environment first (`source .venv/bin/activate`) and run `jev-mail-triage`.
 
 Useful options:
 
-- `status --json` and `candidates --json` print machine-readable output.
+- `stats`, `status`, `candidates`, `train`, and `evaluate` print tables, with
+  colour in a terminal. Set `NO_COLOR=1` to turn colour off.
+- `status --json`, `stats --json`, and `candidates --json` print
+  machine-readable output.
+- `stats --days 7` limits the totals to mail found in the last 7 days.
 - `candidates --limit 100` shows more results (maximum 1,000).
 
 > [!NOTE]

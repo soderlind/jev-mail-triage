@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `stats` command with totals: mail found and assessed, spam and scam/phishing
+  decisions, messages moved, mail left in place, how much Jev and the local gate
+  decided, and local gate verdicts by reason. Supports `--days N` and `--json`.
+
+### Changed
+
+- `stats`, `status`, `candidates`, `train`, and `evaluate` now print tables
+  using [Rich](https://github.com/Textualize/rich), with colour in a terminal.
+  Scores at or above a threshold are highlighted. `candidates` without `--json`
+  shows a table instead of one JSON object per line. Mail headers are shown as
+  plain text, so they can't inject terminal formatting. `--json` output is
+  unchanged.
+
 ## [1.1.0] - 2026-10-14
 
 ### Added
@@ -58,5 +75,6 @@ All notable changes to this project are documented here. The format is based on
 - Baseline handling, UIDVALIDITY recovery, retries with backoff, and
   crash-safe move recovery.
 
+[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...HEAD
 [1.1.0]: https://github.com/soderlind/jev-mail-triage/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/soderlind/jev-mail-triage/releases/tag/1.0.0

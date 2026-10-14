@@ -12,6 +12,8 @@ from .models import Assessment, Decision, LocalLabel, LocalVerdict, MailItem
 
 SCHEMA_VERSION = 3
 LOCAL_MODEL_VERSION = "local-gate"
+# Mirrors gate.USER_RESTORED; state must not import the gate module.
+USER_RESTORED_REASON = "user_restored"
 _SQL_CHUNK = 500
 
 
@@ -631,6 +633,61 @@ class StateStore:
                 (account_id, fingerprint),
             ).fetchone()
         return str(row["decision_outcome"]) if row else None
+
+    def statistics(self, account_id: str, since: float | None = None) -> dict[str, object]:
+        """Aggregate counts over all monitored mailboxes; no message data."""
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT
+                    COUNT(*) AS discovered,
+                    SUM(decision_outcome IS NOT NULL) AS assessed,
+                    SUM(status IN ('queued', 'retry_wait')) AS waiting,
+                    SUM(status='needs_attention') AS needs_attention,
+                    SUM(decision_outcome='move') AS flagged,
+                    SUM(decision_outcome='move' AND decision_reason<>'scam_threshold') AS spam,
+                    SUM(decision_outcome='move' AND decision_reason='scam_threshold') AS scam,
+                    SUM(status='moved') AS moved,
+                    SUM(status='moving') AS moving,
+                    SUM(decision_outcome='leave') AS left_in_place,
+                    SUM(decision_reason='truncated_input') AS too_large,
+                    SUM(decision_reason='authenticated_allowlist') AS allowlisted,
+                    SUM(decision_reason=?) AS restored_by_user,
+                    SUM(decision_outcome IS NOT NULL AND model_version<>?) AS decided_by_jev,
+                    SUM(decision_outcome IS NOT NULL AND model_version=?) AS decided_locally,
+                    SUM(local_verdict='spam') AS local_spam,
+                    SUM(local_verdict='clean') AS local_clean,
+                    SUM(local_verdict IS NOT NULL AND model_version<>?
+                        AND ((local_verdict='spam' AND decision_outcome='leave')
+                          OR (local_verdict='clean' AND decision_outcome='move'))) AS local_disagree,
+                    MIN(created_at) AS first_seen,
+                    MAX(created_at) AS last_seen
+                FROM messages
+                WHERE account_id=? AND created_at>=?
+                """,
+                (
+                    USER_RESTORED_REASON,
+                    LOCAL_MODEL_VERSION,
+                    LOCAL_MODEL_VERSION,
+                    LOCAL_MODEL_VERSION,
+                    account_id,
+                    since or 0.0,
+                ),
+            ).fetchone()
+            reasons = db.execute(
+                """
+                SELECT local_reason, COUNT(*) AS count FROM messages
+                WHERE account_id=? AND created_at>=? AND local_reason IS NOT NULL
+                GROUP BY local_reason ORDER BY count DESC, local_reason
+                """,
+                (account_id, since or 0.0),
+            ).fetchall()
+        counts = [name for name in row.keys() if name not in ("first_seen", "last_seen")]  # noqa: SIM118
+        result: dict[str, object] = {name: int(row[name] or 0) for name in counts}
+        result["first_seen"] = row["first_seen"]
+        result["last_seen"] = row["last_seen"]
+        result["local_reasons"] = {str(r["local_reason"]): int(r["count"]) for r in reasons}
+        return result
 
     def gate_totals(self) -> dict[str, float]:
         with self._connect() as db:

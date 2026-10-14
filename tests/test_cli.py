@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Self
 
@@ -12,6 +13,11 @@ from jev_mail_triage.config import BridgeConfig, Config, PolicyConfig, ServiceCo
 from jev_mail_triage.errors import ConfigurationError, RetryableError
 from jev_mail_triage.models import Assessment, Decision, Outcome
 from jev_mail_triage.state import StateStore
+
+
+def _plain(output: str) -> str:
+    """Rich table text without borders, with whitespace collapsed."""
+    return " ".join(re.sub(r"[\u2500-\u257f]", " ", output).split())
 
 
 def _config(tmp_path: Path) -> Config:
@@ -249,13 +255,12 @@ def test_train_reads_folders_and_prints_model_totals(
 
     monkeypatch.setattr(cli, "_with_bridge", lambda _config, operation: operation(Bridge()))
     cli._train(config, 10)
-    output = capsys.readouterr().out
-    assert "trained spam=1 ham=0 corrections=0 new_correspondents=1 skipped=0" in output
-    assert "missing folders (skipped): Archive" in output
-    assert "model spam_examples=1 ham_examples=0 correspondents=1" in output
+    output = _plain(capsys.readouterr().out)
+    assert "spam 1 1 kept mail 0 0 correspondents 1 1 corrections 0 skipped 0" in output
+    assert "Missing folders (skipped): Archive" in output
 
     cli._status(config, as_json=False)
-    assert "local gate: mode=shadow spam_examples=1" in capsys.readouterr().out
+    assert "Local gate shadow spam examples 1" in _plain(capsys.readouterr().out)
 
 
 @pytest.mark.parametrize("limit", [0, 5001])
@@ -296,7 +301,96 @@ def test_evaluate_reports_local_gate_without_learning(
     monkeypatch.setattr(cli, "_assessor", lambda _config: nullcontext(None))
     monkeypatch.setattr(cli, "JevAssessor", Assessor)
     cli._evaluate(config, tmp_path / "labels.csv")
-    output = capsys.readouterr().out
-    assert "review_volume=1/1" in output
-    assert "decided_locally=1/1 local_spam=1 local_clean=0 false_positives=0" in output
+    output = _plain(capsys.readouterr().out)
+    assert "Review volume: 1/1" in output
+    assert "decided locally 1/1 spam verdicts 1 clean verdicts 0 false positives 0" in output
     assert StateStore(config.database_path).gate_totals()["spam_examples"] == 0
+
+
+def test_stats_reports_spam_scam_moves_and_local_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jev_mail_triage.models import LocalLabel, LocalVerdict
+
+    config = _config(tmp_path)
+    store = StateStore(config.database_path)
+    store.synchronize_mailbox("test", "INBOX", 11, 1)
+    store.discover("test", "INBOX", 11, [1, 2, 3, 4])
+    decisions = [
+        (1, Decision(Outcome.MOVE, "spam_threshold"), None),
+        (
+            2,
+            Decision(Outcome.MOVE, "scam_threshold"),
+            LocalVerdict(LocalLabel.CLEAN, "local_bayes_clean"),
+        ),
+        (
+            3,
+            Decision(Outcome.LEAVE, "below_threshold"),
+            LocalVerdict(LocalLabel.SPAM, "language_not_allowed"),
+        ),
+    ]
+    for uid, decision, verdict in decisions:
+        item = store.get_item("test", "INBOX", 11, uid)
+        assert item is not None
+        store.record_assessment(
+            item,
+            message_id=None,
+            fingerprint=f"f{uid}",
+            assessment=Assessment(0.5, 0.5, "jev-latest", "policy"),
+            decision=decision,
+            truncated=False,
+            local_verdict=verdict,
+        )
+
+    cli._stats(config, None, as_json=True)
+    stats = json.loads(capsys.readouterr().out)
+    assert (stats["discovered"], stats["assessed"], stats["waiting"]) == (4, 3, 1)
+    assert (stats["flagged"], stats["spam"], stats["scam"], stats["left_in_place"]) == (2, 1, 1, 1)
+    assert (stats["decided_by_jev"], stats["decided_locally"]) == (3, 0)
+    assert (stats["local_spam"], stats["local_clean"], stats["local_disagree"]) == (1, 1, 2)
+    assert stats["local_reasons"] == {"language_not_allowed": 1, "local_bayes_clean": 1}
+
+    cli._stats(config, 7, as_json=False)
+    output = _plain(capsys.readouterr().out)
+    assert "Statistics (last 7 days)" in output
+    assert "Spam or phishing 2 66.7%" in output
+    assert "moved to Jev Review 0" in output
+    assert "Moves are off" in output
+    assert "disagreed with Jev 2" in output
+
+
+@pytest.mark.parametrize("days", [0, 3651])
+def test_stats_rejects_invalid_days(tmp_path: Path, days: int) -> None:
+    with pytest.raises(ConfigurationError):
+        cli._stats(_config(tmp_path), days, as_json=False)
+
+
+def test_candidates_table_renders_untrusted_headers_as_plain_text(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jev_mail_triage import ui
+
+    monkeypatch.setenv("COLUMNS", "160")
+
+    row: dict[str, object] = {
+        "uid": 7,
+        "decision_reason": "spam_threshold",
+        "spam_score": 0.99,
+        "scam_score": 0.1,
+        "local_verdict": "spam",
+        "local_reason": "language_not_allowed",
+        "status": "assessed",
+        "header_status": "available",
+        "headers": {"subject": "[bold red]Win[/]\x1b[2J now", "from": "a@b.test", "date": "x"},
+    }
+    ui.render_candidates([row], spam_threshold=0.98, scam_threshold=0.95)
+    output = capsys.readouterr().out
+    assert "\x1b" not in output
+    assert "[bold red]Win[/]" in output
+    assert "7 0.99 0.10 assessed spam_threshold" in _plain(output)
+    assert "local: language_not_allowed" in output
+
+
+def test_main_prints_errors_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["--config", str(tmp_path / "missing.toml"), "status"]) == 2
+    assert "jev-mail-triage:" in capsys.readouterr().err

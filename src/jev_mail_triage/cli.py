@@ -12,6 +12,7 @@ from typing import TypeVar
 
 from typesafe_sdk import RetryPolicy, TypeSafeClient
 
+from . import ui
 from .classifier import JevAssessor
 from .config import DEFAULT_CONFIG_PATH, Config, load_config
 from .errors import ConfigurationError, RetryableError, TriageError
@@ -24,7 +25,6 @@ from .models import LocalLabel, Outcome
 from .policy import decide
 from .service import (
     LAST_TRAINED_KEY,
-    TrainingResult,
     run_backfill,
     run_cycle,
     run_training,
@@ -56,6 +56,12 @@ def _parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status", help="Show local assessment counts, not message data.")
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    stats = commands.add_parser(
+        "stats", help="Show totals: spam, scam/phishing, moved, and who decided."
+    )
+    stats.add_argument("--days", type=int, help="Only mail found in the last N days.")
+    stats.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     candidates = commands.add_parser(
         "candidates", help="List stored move-to-review decisions without changing mail."
@@ -119,15 +125,6 @@ def _gate(config: Config, store: StateStore) -> LocalGate | None:
     return LocalGate(config.gate, config.policy, store) if config.gate.enabled else None
 
 
-def _print_training(result: TrainingResult) -> None:
-    print(
-        f"trained spam={result.spam} ham={result.ham} corrections={result.corrections} "
-        f"new_correspondents={result.correspondents} skipped={result.skipped}"
-    )
-    if result.missing_folders:
-        print(f"missing folders (skipped): {', '.join(result.missing_folders)}")
-
-
 def _train(config: Config, limit: int) -> None:
     if not 1 <= limit <= 5000:
         raise ConfigurationError("Training limit must be between 1 and 5000.")
@@ -138,14 +135,7 @@ def _train(config: Config, limit: int) -> None:
             config, lambda mailbox: run_training(config, store, mailbox, gate, limit)
         )
         totals = store.gate_totals()
-    _print_training(result)
-    print(
-        f"model spam_examples={int(totals['spam_examples'])} "
-        f"ham_examples={int(totals['ham_examples'])} "
-        f"correspondents={int(totals['correspondents'])}"
-    )
-    if not config.gate.enabled:
-        print("Note: [gate] mode is 'off'; set it to 'shadow' to start using the local gate.")
+    ui.render_training(result, totals, gate_mode=config.gate.mode)
 
 
 def _run_cycle(config: Config, *, force_dry_run: bool) -> None:
@@ -248,23 +238,28 @@ def _backfill(config: Config, limit: int, *, force_dry_run: bool) -> None:
 
 
 def _status(config: Config, *, as_json: bool) -> None:
-    import json
-
     store = StateStore(config.database_path)
     rows = store.status_counts(config.bridge.account_id)
     if as_json:
         print(json.dumps(rows, sort_keys=True))
         return
-    if not rows:
-        print("No stored assessments.")
-    for mailbox, statuses in rows.items():
-        counts = " ".join(f"{status}={count}" for status, count in sorted(statuses.items()))
-        print(f"{mailbox}: {counts}")
-    totals = store.gate_totals()
-    print(
-        f"local gate: mode={config.gate.mode} spam_examples={int(totals['spam_examples'])} "
-        f"ham_examples={int(totals['ham_examples'])} "
-        f"correspondents={int(totals['correspondents'])}"
+    ui.render_status(rows, config.gate.mode, store.gate_totals())
+
+
+def _stats(config: Config, days: int | None, *, as_json: bool) -> None:
+    if days is not None and not 1 <= days <= 3650:
+        raise ConfigurationError("--days must be between 1 and 3650.")
+    since = time.time() - days * 86400 if days else None
+    stats = StateStore(config.database_path).statistics(config.bridge.account_id, since)
+    if as_json:
+        print(json.dumps(stats, sort_keys=True))
+        return
+    ui.render_stats(
+        stats,
+        period="all time" if not days else "last day" if days == 1 else f"last {days} days",
+        review_folder=config.policy.review_folder,
+        move_enabled=config.policy.move_enabled,
+        gate_mode=config.gate.mode,
     )
 
 
@@ -309,11 +304,12 @@ def _candidates(config: Config, limit: int, *, headers: bool, as_json: bool) -> 
         rows = _with_bridge(config, lookup)
     if as_json:
         print(json.dumps(rows, sort_keys=True))
-    elif not rows:
-        print("No stored move-to-review decisions.")
     else:
-        for row in rows:
-            print(json.dumps(row, sort_keys=True))
+        ui.render_candidates(
+            rows,
+            spam_threshold=config.policy.spam_threshold,
+            scam_threshold=config.policy.scam_threshold,
+        )
 
 
 def _retry(config: Config, limit: int) -> None:
@@ -456,23 +452,21 @@ def _evaluate(config: Config, labels_path: Path) -> None:
             predicted_review.append(review_guess)
             review_count += review_guess
 
-    print("class false_positives precision recall")
-    for name, expected, predicted in (
-        ("spam", expected_spam, predicted_spam),
-        ("scam_phishing", expected_scam, predicted_scam),
-        ("review", expected_review, predicted_review),
-    ):
-        false_positives, precision, recall = _metrics(expected, predicted)
-        print(f"{name} {false_positives} {precision:.3f} {recall:.3f}")
-    print(f"review_volume={review_count}/{len(rows)} ({review_count / len(rows):.1%})")
-    if gate is not None:
-        decided = local_counts["spam"] + local_counts["clean"]
-        print(
-            f"local_gate mode={config.gate.mode} decided_locally={decided}/{len(rows)} "
-            f"local_spam={local_counts['spam']} local_clean={local_counts['clean']} "
-            f"false_positives={local_counts['false_positives']} "
-            f"missed_spam_or_scam={local_counts['missed']}"
+    metrics = [
+        (name, *_metrics(expected, predicted))
+        for name, expected, predicted in (
+            ("spam", expected_spam, predicted_spam),
+            ("scam_phishing", expected_scam, predicted_scam),
+            ("review", expected_review, predicted_review),
         )
+    ]
+    ui.render_evaluation(
+        metrics,
+        review_count=review_count,
+        total=len(rows),
+        gate_mode=config.gate.mode if gate is not None else None,
+        local_counts=local_counts,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -491,6 +485,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = load_config(args.config)
         if args.command == "status":
             _status(config, as_json=args.json)
+        elif args.command == "stats":
+            _stats(config, args.days, as_json=args.json)
         elif args.command == "candidates":
             _candidates(config, args.limit, headers=args.headers, as_json=args.json)
         elif args.command == "poll":
@@ -507,7 +503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _evaluate(config, args.labels)
         return 0
     except TriageError as exc:
-        print(f"jev-mail-triage: {exc}", file=sys.stderr)
+        ui.error(str(exc))
         return 2
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
