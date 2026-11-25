@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-25
+
+### Fixed
+
+- Statistics: counts and percentages in chart legends no longer wrap one
+  character per line when the Outcome card is narrow; the donut shrinks instead.
+
 ## [2.0.0] - 2026-11-25
 
 ### Added
@@ -137,7 +144,8 @@ The CLI and its `serve` LaunchAgent keep working as before.
 - Baseline handling, UIDVALIDITY recovery, retries with backoff, and
   crash-safe move recovery.
 
-[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/2.0.0...HEAD
+[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/2.0.1...HEAD
+[2.0.1]: https://github.com/soderlind/jev-mail-triage/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/soderlind/jev-mail-triage/compare/1.2.0...2.0.0
 [1.2.0]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/soderlind/jev-mail-triage/compare/1.0.0...1.1.0
