@@ -222,8 +222,11 @@ struct BridgeCheckSummary: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Connected. Opened \(check.mailbox) read-only.", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Label {
+                Text("Connected. Opened \(check.mailbox) read-only.")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
             if !check.supportsMove {
                 Label("Bridge does not advertise MOVE; moves will not be possible.", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)

@@ -86,11 +86,15 @@ struct BridgeSettingsTab: View {
                 .disabled(password.isEmpty)
             }
             Section {
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Button("Test Connection") { Task { await test() } }.disabled(checking)
-                    if checking { ProgressView().controlSize(.small) }
+                    if checking {
+                        ProgressView().controlSize(.small)
+                    } else if let check {
+                        BridgeCheckSummary(check: check)
+                    }
+                    Spacer(minLength: 0)
                 }
-                if let check { BridgeCheckSummary(check: check) }
                 if let checkError { NoticeView(notice: checkError) { self.checkError = nil } }
             }
         }
