@@ -99,6 +99,7 @@ struct SetupView: View {
                 CertificatePicker(path: $bridge.tlsCaFile)
             }
             .formStyle(.grouped)
+            .editableFieldStyle()
             .onChange(of: bridge) { bridgeCheck = nil }
             .onChange(of: password) { bridgeCheck = nil }
             if let check = bridgeCheck { BridgeCheckSummary(check: check) }
@@ -126,6 +127,7 @@ struct SetupView: View {
                     prompt: Text(model.typeSafeSecretPresent ? "Saved in Keychain — leave empty to keep" : "sk-…"))
             }
             .formStyle(.grouped)
+            .editableFieldStyle()
             .onChange(of: apiKey) { typeSafeCheck = nil }
             if let check = typeSafeCheck {
                 Label(

@@ -17,6 +17,7 @@ struct SettingsView: View {
                     ServiceSettingsTab(config: binding).tabItem { Label("Service", systemImage: "clock") }
                     GeneralSettingsTab().tabItem { Label("General", systemImage: "gearshape") }
                 }
+                .editableFieldStyle()
                 .safeAreaInset(edge: .bottom) { footer }
             } else {
                 ContentUnavailableView(
@@ -251,7 +252,19 @@ struct ListEditor: View {
                 )
             )
             .font(.body.monospaced())
+            .scrollContentBackground(.hidden)
+            .padding(4)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: .separatorColor)))
             .frame(minHeight: 48, maxHeight: 90)
         }
+    }
+}
+
+extension View {
+    /// Grouped forms render plain text fields as borderless right-aligned text, which reads
+    /// as a static value. Bordered, leading-aligned fields look editable.
+    func editableFieldStyle() -> some View {
+        textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
     }
 }
