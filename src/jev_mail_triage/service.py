@@ -308,7 +308,9 @@ def _process_item(
         if use_local:
             assessment = verdict_assessment(verdict)
         else:
-            assessed, assessment = _assess_within_limit(config, assessor, fetched, prepared)
+            assessed, assessment = _assess_within_limit(
+                config, assessor, fetched, prepared, uid=current.uid
+            )
         decision = decide(assessed, assessment, config.policy)
         store.record_assessment(
             current,
@@ -668,7 +670,12 @@ def _reconcile_missing_source(
 
 
 def _assess_within_limit(
-    config: Config, assessor: JevAssessor, fetched: FetchedMessage, prepared: PreparedMessage
+    config: Config,
+    assessor: JevAssessor,
+    fetched: FetchedMessage,
+    prepared: PreparedMessage,
+    *,
+    uid: int,
 ) -> tuple[PreparedMessage, Assessment]:
     """Halve the input until the model accepts it; shortened input is never moved."""
     budget = config.policy.max_input_bytes
@@ -679,6 +686,12 @@ def _assess_within_limit(
             budget = min(budget, prepared.input_bytes) // 2
             if budget < MIN_SHORTENED_INPUT_BYTES:
                 raise
+            logger.info(
+                "Message UID %s is too long for the model (%d bytes); retrying with %d bytes.",
+                uid,
+                prepared.input_bytes,
+                budget,
+            )
             prepared = _prepare(config, fetched, max_input_bytes=budget)
 
 

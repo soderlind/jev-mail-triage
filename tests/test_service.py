@@ -1,3 +1,4 @@
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -415,17 +416,19 @@ def _large_message_setup(tmp_path: Path) -> tuple[Config, StateStore, _FakeMailb
 
 
 def test_oversized_message_is_shortened_until_accepted_and_left_in_inbox(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     config, store, mailbox = _large_message_setup(tmp_path)
     assessor = _TokenLimitedAssessor(limit=10000)
-    result = run_cycle(config, store, mailbox, assessor)
+    with caplog.at_level(logging.INFO, logger="jev_mail_triage"):
+        result = run_cycle(config, store, mailbox, assessor)
     item = store.get_item("test", "INBOX", 77, 1)
     assert result.assessed == 1 and result.moved == 0
     assert assessor.sizes[0] > 30000 and assessor.sizes[-1] <= 10000
     assert item.status == "assessed" and item.truncated
     assert item.decision_reason == "truncated_input"
     assert 1 in mailbox.boxes["INBOX"]
+    assert "UID 1 is too long for the model" in caplog.text
 
 
 def test_message_too_large_even_shortened_needs_attention_without_retries(
