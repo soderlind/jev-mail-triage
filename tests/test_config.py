@@ -65,7 +65,7 @@ def test_norwegian_alias_is_expanded(tmp_path: Path) -> None:
         ("near_duplicate_similarity = 0.2", "at least 0.5"),
         ('spam_folders = ["Archive"]', "both"),
         ('ham_folders = ["INBOX"]', "monitored"),
-        ('spam_folders = ["Jev Review"]', "review"),
+        ('spam_folders = ["Folders/Jev Review"]', "review"),
         ("learn_from_jev = 1", "true or false"),
     ],
 )
