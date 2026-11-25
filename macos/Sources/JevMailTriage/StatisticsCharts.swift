@@ -95,8 +95,10 @@ struct OutcomeChart: View {
                     Text("assessed").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 150, height: 150)
-            Legend(slices: slices, total: stats.assessed)
+            // The donut gives way before the legend, whose numbers must stay on one line.
+            .frame(minWidth: 110, maxWidth: 150, minHeight: 110, maxHeight: 150)
+            .aspectRatio(1, contentMode: .fit)
+            Legend(slices: slices, total: stats.assessed).layoutPriority(1)
         }
     }
 }
@@ -133,8 +135,11 @@ struct Legend: View {
                 GridRow {
                     Circle().fill(StatColor.color(slice.id)).frame(width: 8, height: 8)
                     Text(slice.label).font(.callout).lineLimit(1).fixedSize()
-                    Text(slice.value.formatted()).font(.callout).monospacedDigit().gridColumnAlignment(.trailing)
+                    // Numbers must never wrap; a squeezed column broke "354" into one digit per line.
+                    Text(slice.value.formatted()).font(.callout).monospacedDigit().lineLimit(1).fixedSize()
+                        .gridColumnAlignment(.trailing)
                     Text(share(slice.value)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        .lineLimit(1).fixedSize()
                         .gridColumnAlignment(.trailing)
                 }
             }
@@ -165,6 +170,7 @@ struct ReasonChart: View {
                     }
                     .frame(height: 12)
                     Text(slice.value.formatted()).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        .lineLimit(1).fixedSize()
                         .gridColumnAlignment(.trailing)
                 }
             }
