@@ -132,7 +132,7 @@ struct Legend: View {
             ForEach(slices) { slice in
                 GridRow {
                     Circle().fill(StatColor.color(slice.id)).frame(width: 8, height: 8)
-                    Text(slice.label).font(.callout)
+                    Text(slice.label).font(.callout).lineLimit(1).fixedSize()
                     Text(slice.value.formatted()).font(.callout).monospacedDigit().gridColumnAlignment(.trailing)
                     Text(share(slice.value)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                         .gridColumnAlignment(.trailing)

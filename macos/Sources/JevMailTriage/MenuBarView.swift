@@ -24,7 +24,7 @@ struct MenuBarView: View {
             if let cycle = model.worker?.lastCycle {
                 Text(
                     "Last check \(Date(timeIntervalSince1970: cycle.finishedAt).formatted(.relative(presentation: .named))): "
-                        + "\(cycle.assessed) assessed, \(cycle.moved) moved"
+                        + "\(cycle.assessed.formatted()) assessed, \(cycle.moved.formatted()) moved"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -189,10 +189,10 @@ struct OverviewView: View {
                     Text("Finished")
                     Text(Date(timeIntervalSince1970: cycle.finishedAt).formatted(date: .abbreviated, time: .standard))
                 }
-                GridRow { Text("Discovered"); Text("\(cycle.discovered)") }
-                GridRow { Text("Assessed"); Text("\(cycle.assessed)") }
-                GridRow { Text("Moved"); Text("\(cycle.moved)") }
-                GridRow { Text("Needs attention"); Text("\(cycle.attention)") }
+                GridRow { Text("Discovered"); Text(cycle.discovered.formatted()).monospacedDigit() }
+                GridRow { Text("Assessed"); Text(cycle.assessed.formatted()).monospacedDigit() }
+                GridRow { Text("Moved"); Text(cycle.moved.formatted()).monospacedDigit() }
+                GridRow { Text("Needs attention"); Text(cycle.attention.formatted()).monospacedDigit() }
                 if cycle.recordedBaseline { GridRow { Text("Baseline"); Text("Existing mail recorded, not assessed") } }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -259,6 +259,10 @@ struct StatisticsView: View {
                                         StatSlice(id: "jev", label: "Jev", value: stats.decidedByJev),
                                         StatSlice(id: "local", label: "Local gate", value: stats.decidedLocally),
                                     ])
+                                    if let note = gateNote {
+                                        Text(note).font(.caption).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
                                 }
                                 ChartCard("Local gate verdicts") {
                                     ShareBar(slices: [
@@ -307,6 +311,15 @@ struct StatisticsView: View {
         }
         .navigationTitle("Statistics")
         .task(id: days) { await load() }
+    }
+
+    /// Explains why the local gate decides nothing unless it is enforcing.
+    private var gateNote: String? {
+        switch model.config?.gate.mode {
+        case "shadow": return "The local gate is in shadow mode: it records its verdicts, but Jev decides every message."
+        case "off": return "The local gate is off, so Jev decides every message."
+        default: return nil
+        }
     }
 
     @ViewBuilder private func row(_ title: String, _ value: Int) -> some View {
