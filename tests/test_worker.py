@@ -99,6 +99,29 @@ def test_worker_reports_bridge_outage_then_recovers(tmp_path: Path) -> None:
     assert status["error"] is None
 
 
+def test_worker_releases_the_lock_while_backing_off_after_a_failure(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+
+    def bridge(*_args: object) -> Any:
+        raise RetryableError("down", code="bridge_unavailable")
+
+    worker = _worker(tmp_path, bridge)
+    original = worker._publish
+    lock_free: list[bool] = []
+
+    def record(state: str, **kwargs: Any) -> None:
+        original(state, **kwargs)
+        if state == "bridge_unavailable":
+            with ProcessLock(tmp_path / "state.sqlite3"):
+                lock_free.append(True)
+            worker.request_stop()
+
+    worker._publish = record  # type: ignore[method-assign]
+    worker.run()
+    assert lock_free == [True]
+    assert _status(tmp_path)["consecutive_failures"] == 1
+
+
 def test_worker_stays_alive_and_reports_missing_configuration(tmp_path: Path) -> None:
     def bridge(*_args: object) -> Any:
         pytest.fail("No Bridge session without a valid configuration.")

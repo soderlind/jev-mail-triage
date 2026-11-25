@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import DEFAULT_DATABASE_PATH, Config, load_config
 from .errors import ConfigurationError
+from .lock import file_lock
 
 _STR = "string"
 _INT = "integer"
@@ -177,10 +178,16 @@ def dumps(document: dict[str, Any]) -> str:
 def update_config(path: Path, patch: dict[str, Any]) -> Config:
     """Validate and atomically write ``patch`` merged into the config file at ``path``."""
     path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Concurrent saves from separate helper processes must each merge into the latest file.
+    with file_lock(path.with_name(f".{path.name}.lock")):
+        return _update_locked(path, patch)
+
+
+def _update_locked(path: Path, patch: dict[str, Any]) -> Config:
     existing = read_document(path)
     merged = merge(NEW_CONFIG if existing is None else existing, patch)
     text = dumps(merged)
-    path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=".config-", suffix=".toml", dir=path.parent)
     temp = Path(temp_name)
     try:

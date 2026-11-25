@@ -296,6 +296,22 @@ def test_apply_counts_recovered_moves_against_limit(tmp_path: Path) -> None:
     assert list(mailbox.boxes["INBOX"]) == [2]
 
 
+def test_stop_request_leaves_interrupted_moves_for_the_next_cycle(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=True)
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    _add_message(mailbox, 1)
+    run_cycle(config, store, mailbox, _FakeAssessor(), force_dry_run=True)
+    interrupted = store.get_item("test", "INBOX", 77, 1)
+    assert interrupted is not None
+    store.begin_move(interrupted, destination_before="88:1")
+
+    run_cycle(config, store, mailbox, _FakeAssessor(), stop=lambda: True)
+    assert list(mailbox.boxes["INBOX"]) == [1]
+    assert store.get_item("test", "INBOX", 77, 1).status == "moving"
+
+
 def test_apply_reselects_inbox_before_each_recheck(tmp_path: Path) -> None:
     config = _config(tmp_path / "state.sqlite3", moves=True)
     store = StateStore(config.database_path)
@@ -563,6 +579,16 @@ def test_training_reads_folders_once_and_counts_corrections(tmp_path: Path) -> N
 
     again = run_training(config, store, mailbox, gate, 100)
     assert (again.spam, again.ham, again.correspondents) == (0, 0, 0)
+
+
+def test_training_stops_between_messages_and_stays_due(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "shadow", moves=False)
+    mailbox.boxes["Spam"] = {1: (MESSAGE, False), 2: (_raw("x@y.test", "Win", "big prize"), False)}
+
+    result = run_training(config, store, mailbox, gate, 100, stop=lambda: True)
+    assert result.interrupted
+    assert result.spam == 1
+    assert training_due(config, store)
 
 
 def test_training_reports_missing_folders_and_validates_limit(tmp_path: Path) -> None:

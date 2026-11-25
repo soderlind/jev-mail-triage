@@ -60,18 +60,28 @@ def make_gate(config: Config, store: StateStore) -> LocalGate | None:
 
 
 def train_in_background(
-    config: Config, store: StateStore, gate: LocalGate, bridge: BridgeRunner[object]
+    config: Config,
+    store: StateStore,
+    gate: LocalGate,
+    bridge: BridgeRunner[object],
+    *,
+    stop: Callable[[], bool] | None = None,
 ) -> None:
     """Train during continuous operation; failures never block triage."""
     try:
         training = bridge(
             config,
-            lambda mailbox: run_training(config, store, mailbox, gate, SERVE_TRAINING_LIMIT),
+            lambda mailbox: run_training(
+                config, store, mailbox, gate, SERVE_TRAINING_LIMIT, stop=stop
+            ),
         )
     except TriageError as exc:
         # Postpone the next attempt by a full interval instead of retrying every cycle.
         store.set_gate_meta(LAST_TRAINED_KEY, time.time())
         logger.warning("Local gate training skipped (%s).", type(exc).__name__)
+        return
+    if training.interrupted:
+        logger.info("Local gate training paused; it continues on the next run.")
         return
     logger.info(
         "Local gate trained: spam=%d ham=%d corrections=%d new_correspondents=%d "

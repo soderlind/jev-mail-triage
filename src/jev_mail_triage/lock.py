@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import fcntl
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
 from .errors import TriageError
+
+
+@contextmanager
+def file_lock(path: Path) -> Iterator[None]:
+    """Hold an exclusive lock on ``path`` for a short read-modify-write across processes.
+
+    Unlike ``ProcessLock`` this waits for the lock instead of failing.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 class ProcessLock:

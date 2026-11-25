@@ -24,7 +24,7 @@ from . import __version__, runtime
 from .classifier import JevAssessor
 from .config import Config, load_config
 from .errors import ConfigurationError, RetryableError, TriageError
-from .lock import ProcessLock
+from .lock import ProcessLock, file_lock
 from .paths import CONTROL_FILE, LOG_DIR, STATUS_FILE, read_json, write_json_atomic
 from .service import CycleResult, run_cycle, training_due
 from .state import StateStore
@@ -52,6 +52,12 @@ def read_control(state_dir: Path) -> Control:
 
 
 def write_control(state_dir: Path, *, paused: bool | None = None, reload: bool = False) -> Control:
+    # Pause and reload can arrive from separate helper processes; neither may lose the other.
+    with file_lock(state_dir / f".{CONTROL_FILE}.lock"):
+        return _write_control_locked(state_dir, paused=paused, reload=reload)
+
+
+def _write_control_locked(state_dir: Path, *, paused: bool | None, reload: bool) -> Control:
     current = read_control(state_dir)
     updated = Control(
         current.paused if paused is None else paused,
@@ -111,6 +117,7 @@ class Worker:
         self.stop_event = threading.Event()
         self._snapshot = _Snapshot(since=self.deps.wall())
         self._last_heartbeat = 0.0
+        self._failures = 0
 
     # Lifecycle -----------------------------------------------------------------------
 
@@ -140,7 +147,7 @@ class Worker:
             try:
                 with ProcessLock(config.database_path):
                     self._snapshot.lock_holder = None
-                    self._session(config, changed)
+                    failure = self._session(config, changed)
             except ConfigurationError as exc:
                 self._fail("error", exc, changed, _ERROR_RETRY_SECONDS)
             except TriageError as exc:
@@ -149,20 +156,28 @@ class Worker:
                     continue
                 self._snapshot.lock_holder = ProcessLock.holder(config.database_path)
                 self._fail("waiting_for_lock", exc, changed, _LOCK_RETRY_SECONDS)
+            else:
+                if failure is not None:
+                    # Back off with the lock released so CLI commands can run meanwhile.
+                    state, exc = failure
+                    delay = min(5 * 2 ** (self._failures - 1), config.service.backoff_max_seconds)
+                    self._fail(state, exc, changed, delay)
         self._publish("stopped")
         logger.info("Worker stopped.")
         return 0
 
-    def _session(self, config: Config, changed: Callable[[], bool]) -> None:
+    def _session(
+        self, config: Config, changed: Callable[[], bool]
+    ) -> tuple[str, TriageError] | None:
+        """Run cycles until something changes; return a failed cycle's state and error."""
         store = StateStore(config.database_path)
         gate = runtime.make_gate(config, store)
         with self.deps.assessor(config) as assessor:
-            failures = 0
             while not changed():
                 if gate is not None and training_due(config, store):
-                    runtime.train_in_background(config, store, gate, self.deps.bridge)
+                    runtime.train_in_background(config, store, gate, self.deps.bridge, stop=changed)
                     if changed():
-                        return
+                        return None
                 self._publish("running", error=None)
 
                 def cycle(mailbox: Any) -> CycleResult:
@@ -173,20 +188,12 @@ class Worker:
                 try:
                     result = self.deps.bridge(config, cycle)
                 except RetryableError as exc:
-                    failures += 1
-                    delay = min(5 * 2 ** (failures - 1), config.service.backoff_max_seconds)
-                    self._snapshot.consecutive_failures = failures
-                    self._fail("bridge_unavailable", exc, changed, delay)
-                    continue
+                    return self._failed("bridge_unavailable", exc)
                 except ConfigurationError:
                     raise
                 except TriageError as exc:
-                    failures += 1
-                    delay = min(5 * 2 ** (failures - 1), config.service.backoff_max_seconds)
-                    self._snapshot.consecutive_failures = failures
-                    self._fail("error", exc, changed, delay)
-                    continue
-                failures = 0
+                    return self._failed("error", exc)
+                self._failures = 0
                 self._snapshot.consecutive_failures = 0
                 self._snapshot.last_cycle = {
                     "finished_at": self.deps.wall(),
@@ -206,6 +213,12 @@ class Worker:
                 )
                 self._publish("idle", error=None)
                 self._wait(config.service.poll_interval_seconds, changed)
+        return None
+
+    def _failed(self, state: str, exc: TriageError) -> tuple[str, TriageError]:
+        self._failures += 1
+        self._snapshot.consecutive_failures = self._failures
+        return state, exc
 
     # Waiting and change detection ---------------------------------------------------
 

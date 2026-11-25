@@ -88,6 +88,7 @@ class TrainingResult:
     correspondents: int = 0
     skipped: int = 0
     missing_folders: list[str] = field(default_factory=list)
+    interrupted: bool = False
 
 
 LAST_TRAINED_KEY = "last_trained_at"
@@ -124,6 +125,8 @@ def run_cycle(
     moved_before = store.counts(bridge.account_id, inbox).get("moved", 0)
 
     for item in store.moving_items(bridge.account_id, inbox, uid_validity, 20):
+        if should_stop():
+            break
         _recover_move(config, store, mailbox, item, move_enabled=move_enabled)
 
     cursor = store.cursor(bridge.account_id, inbox)
@@ -381,8 +384,15 @@ def run_training(
     mailbox: MailboxSession,
     gate: LocalGate,
     limit: int,
+    *,
+    stop: Callable[[], bool] | None = None,
 ) -> TrainingResult:
-    """Learn from the user's own folders. Read-only: folders are selected with EXAMINE."""
+    """Learn from the user's own folders. Read-only: folders are selected with EXAMINE.
+
+    ``stop`` is checked after each message, before the next is fetched. An interrupted
+    run leaves the training time unchanged, so the next run continues where it stopped.
+    """
+    should_stop = stop or (lambda: False)
     if not 1 <= limit <= 5000:
         raise ConfigurationError("Training limit must be between 1 and 5000.")
     account = config.bridge.account_id
@@ -417,6 +427,9 @@ def run_training(
                 else:
                     result.ham += 1
             store.mark_training_seen(account, folder, uid_validity, uid)
+            if should_stop():
+                result.interrupted = True
+                return result
     for folder in config.gate.sent_folders:
         if folder not in available:
             result.missing_folders.append(folder)
@@ -431,6 +444,9 @@ def run_training(
                     address_hash(address) for address in addresses
                 )
             store.mark_training_seen(account, folder, uid_validity, uid)
+            if should_stop():
+                result.interrupted = True
+                return result
     store.set_gate_meta(LAST_TRAINED_KEY, time.time())
     return result
 
