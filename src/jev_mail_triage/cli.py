@@ -25,8 +25,10 @@ from .models import LocalLabel, Outcome
 from .policy import decide
 from .service import (
     LAST_TRAINED_KEY,
+    run_apply,
     run_backfill,
     run_cycle,
+    run_skip_backlog,
     run_training,
     training_due,
 )
@@ -53,6 +55,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     backfill.add_argument("--limit", required=True, type=int)
     backfill.add_argument("--dry-run", action="store_true")
+
+    apply = commands.add_parser(
+        "apply",
+        help="Move stored move decisions to the review folder now; no TypeSafe calls.",
+    )
+    apply.add_argument("--limit", type=int, default=100, help="Maximum messages (1-1000).")
+
+    commands.add_parser(
+        "skip-backlog",
+        help="Mark Inbox mail not yet assessed as seen, so only new arrivals are assessed.",
+    )
 
     status = commands.add_parser("status", help="Show local assessment counts, not message data.")
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
@@ -235,6 +248,25 @@ def _backfill(config: Config, limit: int, *, force_dry_run: bool) -> None:
         f"baseline={result.baseline} discovered={result.discovered} "
         f"assessed={result.assessed} moved={result.moved} attention={result.attention}"
     )
+
+
+def _apply(config: Config, limit: int) -> None:
+    if not 1 <= limit <= 1000:
+        raise ConfigurationError("Apply limit must be between 1 and 1000.")
+    with ProcessLock(config.database_path):
+        store = StateStore(config.database_path)
+        result = _with_bridge(config, lambda mailbox: run_apply(config, store, mailbox, limit))
+    print(
+        f"baseline={result.baseline} applied={result.assessed} moved={result.moved} "
+        f"attention={result.attention}"
+    )
+
+
+def _skip_backlog(config: Config) -> None:
+    with ProcessLock(config.database_path):
+        store = StateStore(config.database_path)
+        skipped = _with_bridge(config, lambda mailbox: run_skip_backlog(config, store, mailbox))
+    print(f"skipped={skipped}")
 
 
 def _status(config: Config, *, as_json: bool) -> None:
@@ -495,6 +527,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _serve(config)
         elif args.command == "backfill":
             _backfill(config, args.limit, force_dry_run=args.dry_run)
+        elif args.command == "apply":
+            _apply(config, args.limit)
+        elif args.command == "skip-backlog":
+            _skip_backlog(config)
         elif args.command == "retry":
             _retry(config, args.limit)
         elif args.command == "train":

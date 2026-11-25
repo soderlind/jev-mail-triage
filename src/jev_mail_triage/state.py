@@ -192,6 +192,32 @@ class StateStore:
                 return "rebaseline"
             return "steady"
 
+    def skip_backlog(self, account_id: str, mailbox: str, uid_validity: int, last_uid: int) -> int:
+        """Advance the cursor to last_uid and retire queued mail that was never assessed.
+
+        Stored decisions and move journals are kept. Returns the number of retired rows.
+        """
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """
+                UPDATE mailboxes SET last_seen_uid=MAX(last_seen_uid, ?)
+                WHERE account_id=? AND mailbox=? AND uid_validity=?
+                """,
+                (last_uid, account_id, mailbox, uid_validity),
+            )
+            cursor = db.execute(
+                """
+                UPDATE messages SET status='superseded', last_error='backlog_skipped',
+                    next_attempt_at=NULL, updated_at=?
+                WHERE account_id=? AND mailbox=? AND uid_validity=?
+                  AND status IN ('queued','retry_wait') AND action_phase IS NULL
+                  AND spam_score IS NULL
+                """,
+                (time.time(), account_id, mailbox, uid_validity),
+            )
+            return cursor.rowcount
+
     def cursor(self, account_id: str, mailbox: str) -> int:
         with self._connect() as db:
             row = db.execute(

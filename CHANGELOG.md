@@ -6,11 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
 ### Added
 
 - `stats` command with totals: mail found and assessed, spam and scam/phishing
   decisions, messages moved, mail left in place, how much Jev and the local gate
   decided, and local gate verdicts by reason. Supports `--days N` and `--json`.
+- `apply --limit N` moves stored move decisions to the review folder without
+  new TypeSafe calls. Requires `move_enabled = true`.
+- `skip-backlog` marks Inbox mail that has not been assessed yet as seen
+  (including mail already queued), so only new arrivals are sent to TypeSafe.
+
+### Fixed
+
+- Moves never happened with Proton Mail Bridge: IMAP capabilities were read
+  before login, when Bridge does not yet advertise `MOVE` or `UIDPLUS`, so every
+  move decision ended as `safe_move_capability_unavailable`. Capabilities are
+  now read after login.
 
 ### Changed
 
@@ -78,6 +91,7 @@ All notable changes to this project are documented here. The format is based on
 - Baseline handling, UIDVALIDITY recovery, retries with backoff, and
   crash-safe move recovery.
 
-[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/soderlind/jev-mail-triage/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/soderlind/jev-mail-triage/releases/tag/1.0.0
