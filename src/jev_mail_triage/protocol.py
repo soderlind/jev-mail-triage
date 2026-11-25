@@ -396,6 +396,24 @@ def _candidate_headers(ctx: Context, params: dict[str, Any]) -> dict[str, Any]:
     return {"candidates": rows, "not_candidates": unknown}
 
 
+@command("attention")
+def _attention(ctx: Context, _params: dict[str, Any]) -> dict[str, Any]:
+    config = ctx.config()
+    return {"reasons": StateStore(config.database_path).attention_summary(config.bridge.account_id)}
+
+
+@command("attention.retry")
+def _attention_retry(ctx: Context, _params: dict[str, Any]) -> dict[str, Any]:
+    """Re-queue failed assessments and wake the worker. Rows with a move in progress are
+    left alone; they need checking by hand."""
+    config = ctx.config()
+    store = StateStore(config.database_path)
+    retried = store.retry_attention(config.bridge.account_id, 1000)
+    if retried:
+        write_control(ctx.state_dir, reload=True)
+    return {"retried": retried, "reasons": store.attention_summary(config.bridge.account_id)}
+
+
 @command("worker.status")
 def _worker_status_command(ctx: Context, _params: dict[str, Any]) -> dict[str, Any]:
     return _worker_status(ctx)

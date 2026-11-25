@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format is based on
   - Settings for policy, local gate and service options, with Mailbox and
     Review folder pickers filled from Bridge (`bridge.folders`, read-only).
   - An explicit confirmation before turning on automatic moves.
+  - A "Needs attention" card that explains each failure and re-queues failed
+    assessments (`attention`, `attention.retry`). Interrupted moves are never
+    retried automatically.
   - Launch at login.
 - The app bundles the engine as a PyInstaller helper, so no Python install is
   needed. It requires macOS 27 or later on Apple Silicon.

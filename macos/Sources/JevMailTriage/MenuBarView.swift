@@ -29,6 +29,14 @@ struct MenuBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            if let attention = model.attention, attention.total > 0 {
+                Button { open(WindowID.dashboard) } label: {
+                    Label("\(attention.total.formatted()) messages need attention", systemImage: "exclamationmark.triangle.fill")
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .help("Open the dashboard to see why and retry")
+            }
             if let notice = model.notice {
                 NoticeView(notice: notice) { model.notice = nil }
             }

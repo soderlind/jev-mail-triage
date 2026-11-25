@@ -85,6 +85,7 @@ struct OverviewView: View {
                 if case .legacyInstalled(let loaded) = model.phase {
                     migrationCard(loaded: loaded)
                 }
+                if let attention = model.attention, attention.total > 0 { attentionCard(attention) }
                 movesCard
                 if let cycle = model.worker?.lastCycle { lastCycleCard(cycle) }
                 if let status = model.status { mailboxCard(status) }
@@ -131,6 +132,34 @@ struct OverviewView: View {
                     .disabled(model.isBusy("migrate"))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func attentionCard(_ attention: AttentionResult) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(attention.reasons) { reason in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(reason.count.formatted()).font(.headline).monospacedDigit().frame(minWidth: 32, alignment: .trailing)
+                        Text(reason.explanation).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                HStack {
+                    if attention.retryable > 0 {
+                        Button("Retry \(attention.retryable.formatted())") { Task { await model.retryAttention() } }
+                            .disabled(model.isBusy("attention"))
+                            .help("Queue these messages to be assessed again on the next check")
+                        if model.isBusy("attention") { ProgressView().controlSize(.small) }
+                    }
+                    if attention.retryable < attention.total {
+                        Text("Interrupted moves are never retried automatically. Look for the message in the Inbox and “\(model.config?.policy.reviewFolder ?? "review")”.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("Needs attention", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         }
     }
 

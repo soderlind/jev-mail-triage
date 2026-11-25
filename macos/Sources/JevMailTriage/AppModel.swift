@@ -46,6 +46,8 @@ final class AppModel {
     private(set) var worker: WorkerStatus?
     private(set) var control = WorkerControl(paused: false, generation: 0)
     private(set) var status: StatusResult?
+    /// Why messages need attention; nil until loaded or when the helper is older.
+    private(set) var attention: AttentionResult?
     private(set) var launchAtLogin = false
     private(set) var busy: Set<String> = []
     var notice: Notice?
@@ -133,7 +135,10 @@ final class AppModel {
                 KeychainPresence.exists(account: KeychainPresence.typeSafeAccount)
             )
         }.value
-        if configured { status = try? await helper.call("status", as: StatusResult.self) }
+        if configured {
+            status = try? await helper.call("status", as: StatusResult.self)
+            attention = try? await helper.call("attention", as: AttentionResult.self)
+        }
     }
 
     private func perform(_ key: String, _ title: String, _ work: () async throws -> Void) async {
@@ -341,6 +346,13 @@ final class AppModel {
     }
 
     // MARK: Data
+
+    /// Re-queues failed assessments; the helper leaves interrupted moves alone.
+    func retryAttention() async {
+        await perform("attention", "Could not retry the messages") {
+            attention = try await helper.call("attention.retry", as: AttentionResult.self)
+        }
+    }
 
     func loadStats(days: Int?) async throws -> StatsResult {
         var params: [String: JSONValue] = [:]

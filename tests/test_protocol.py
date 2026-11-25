@@ -182,6 +182,35 @@ def test_secret_is_taken_from_the_request_and_never_echoed(
     assert "hunter2-x" not in json.dumps(response)
 
 
+def test_attention_retry_requeues_only_safe_rows_and_wakes_the_worker(tmp_path: Path) -> None:
+    ctx = _configured(tmp_path)
+    store = StateStore(ctx.config().database_path)
+    store.synchronize_mailbox("primary", "INBOX", 11, 1)
+    store.discover("primary", "INBOX", 11, [1, 2])
+    failed, moving = (
+        store.get_item("primary", "INBOX", 11, 1),
+        store.get_item("primary", "INBOX", 11, 2),
+    )
+    assert failed is not None and moving is not None
+    store.mark_needs_attention(failed, "attempt_limit_reached")
+    store.mark_needs_attention(moving, "move_outcome_ambiguous", ambiguous_action=True)
+
+    response, _ = _call(ctx, "attention")
+    assert {(r["reason"], r["retryable"]) for r in response["result"]["reasons"]} == {
+        ("attempt_limit_reached", True),
+        ("move_outcome_ambiguous", False),
+    }
+
+    response, _ = _call(ctx, "attention.retry")
+    result = response["result"]
+    assert result["retried"] == 1
+    assert result["reasons"] == [
+        {"reason": "move_outcome_ambiguous", "retryable": False, "count": 1}
+    ]
+    assert store.get_item("primary", "INBOX", 11, 1).status == "queued"  # type: ignore[union-attr]
+    assert json.loads((ctx.state_dir / "worker-control.json").read_text())["generation"] == 1
+
+
 def test_header_lookup_is_limited_to_stored_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
