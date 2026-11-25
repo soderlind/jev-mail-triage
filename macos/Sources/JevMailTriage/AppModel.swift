@@ -332,16 +332,18 @@ final class AppModel {
 
     /// Saves Bridge settings and secrets. Moves stay off (dry run) for a new configuration.
     func completeSetup(bridge: BridgeSettings, password: String?, apiKey: String?) async throws {
-        let result = try await helper.call(
-            "config.set", params: ["patch": ["bridge": bridge.patch]], as: ConfigResult.self)
-        config = result.config
-        configured = true
+        // Store secrets first: marking setup configured closes the wizard, so a Keychain
+        // failure afterwards would leave a half-configured app with no way to retry.
         if let password, !password.isEmpty {
             try await storeSecret("bridge-password", value: password, accountID: bridge.accountId)
         }
         if let apiKey, !apiKey.isEmpty {
             try await storeSecret("typesafe-api-key", value: apiKey, accountID: nil)
         }
+        let result = try await helper.call(
+            "config.set", params: ["patch": ["bridge": bridge.patch]], as: ConfigResult.self)
+        config = result.config
+        configured = true
         await refresh(full: true)
     }
 

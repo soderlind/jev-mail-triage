@@ -328,16 +328,24 @@ struct OptionalTextField: View {
 struct ListEditor: View {
     let title: String
     @Binding var items: [String]
+    /// Raw text keeps a just-typed newline or space; normalising it on every keystroke
+    /// would make it impossible to start a new line.
+    @State private var text = ""
+
+    static func normalized(_ text: String) -> [String] {
+        text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.callout)
-            TextEditor(
-                text: Binding(
-                    get: { items.joined(separator: "\n") },
-                    set: { items = $0.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-                )
-            )
+            TextEditor(text: $text)
+            .onAppear { text = items.joined(separator: "\n") }
+            .onChange(of: text) { items = Self.normalized(text) }
+            .onChange(of: items) {
+                // Revert or reload replaced the list; show it unless it's what was typed.
+                if Self.normalized(text) != items { text = items.joined(separator: "\n") }
+            }
             .font(.body.monospaced())
             .scrollContentBackground(.hidden)
             .padding(4)

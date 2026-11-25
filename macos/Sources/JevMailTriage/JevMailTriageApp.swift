@@ -71,7 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertSecondButtonReturn:
             Task { @MainActor in
                 await model.pause()
-                sender.reply(toApplicationShouldTerminate: true)
+                // A failed pause shows a notice; stay open so triage isn't left running unnoticed.
+                sender.reply(toApplicationShouldTerminate: model.control.paused)
             }
             return .terminateLater
         default:
