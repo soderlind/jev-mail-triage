@@ -1,0 +1,1 @@
+{"error": {"code": "not_configured", "message": "Configuration file not found: /Users/example/config.toml. Copy config.example.toml and edit its Bridge settings.", "retryable": false}, "id": "n", "ok": false, "protocol": 1}
