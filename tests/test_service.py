@@ -531,3 +531,22 @@ def test_training_is_due_only_when_gate_enabled(tmp_path: Path) -> None:
     store.set_gate_meta("last_trained_at", 990.0)
     assert not training_due(enabled, store, now=1000.0)
     assert training_due(enabled, store, now=1050.0)
+
+
+def test_stop_request_ends_cycle_between_messages(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=False)
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    for uid in (1, 2, 3):
+        _add_message(mailbox, uid)
+    checks: list[int] = []
+
+    def stop() -> bool:
+        checks.append(1)
+        return len(checks) > 1
+
+    result = run_cycle(config, store, mailbox, _FakeAssessor(), stop=stop)
+    assert result.assessed == 1
+    resumed = run_cycle(config, store, mailbox, _FakeAssessor())
+    assert resumed.assessed == 2

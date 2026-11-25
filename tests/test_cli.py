@@ -7,7 +7,7 @@ from typing import Self
 
 import pytest
 
-from jev_mail_triage import cli
+from jev_mail_triage import cli, runtime
 from jev_mail_triage.cli import _evaluation_rows, _metrics
 from jev_mail_triage.config import BridgeConfig, Config, PolicyConfig, ServiceConfig
 from jev_mail_triage.errors import ConfigurationError, RetryableError
@@ -192,9 +192,9 @@ def test_bridge_failures_use_bounded_exponential_backoff(
             return None
 
     delays: list[int] = []
-    monkeypatch.setattr(cli, "BridgeImap", _Bridge)
-    monkeypatch.setattr(cli, "get_bridge_password", lambda _account: "synthetic")
-    monkeypatch.setattr(cli.time, "sleep", delays.append)
+    monkeypatch.setattr(runtime, "BridgeImap", _Bridge)
+    monkeypatch.setattr(runtime, "get_bridge_password", lambda _account: "synthetic")
+    monkeypatch.setattr(runtime.time, "sleep", delays.append)
 
     assert cli._with_bridge(_config(tmp_path), lambda _mailbox: "connected") == "connected"
     assert _Bridge.attempts == 3
@@ -217,9 +217,9 @@ def test_bridge_failure_attempts_stop_at_configured_limit(
         def __exit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(cli, "BridgeImap", _Bridge)
-    monkeypatch.setattr(cli, "get_bridge_password", lambda _account: "synthetic")
-    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime, "BridgeImap", _Bridge)
+    monkeypatch.setattr(runtime, "get_bridge_password", lambda _account: "synthetic")
+    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
     with pytest.raises(RetryableError):
         cli._with_bridge(_config(tmp_path), lambda _mailbox: "unreachable")
     assert _Bridge.attempts == 3

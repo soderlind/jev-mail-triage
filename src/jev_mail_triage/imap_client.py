@@ -82,9 +82,18 @@ class BridgeImap:
                 connection = imaplib.IMAP4(self.config.host, self.config.port, timeout=30)
                 self._connection = connection
                 connection.starttls(ssl_context=context)
-            status, _ = connection.login(self.config.username, self._password)
+            try:
+                status, _ = connection.login(self.config.username, self._password)
+            except imaplib.IMAP4.error as exc:
+                raise RetryableError(
+                    "Bridge IMAP authentication failed; check the Bridge username and password.",
+                    code="bridge_auth",
+                ) from exc
             if status != "OK":
-                raise RetryableError("Bridge IMAP authentication failed.")
+                raise RetryableError(
+                    "Bridge IMAP authentication failed; check the Bridge username and password.",
+                    code="bridge_auth",
+                )
             # Bridge advertises MOVE and UIDPLUS only after authentication.
             status, capability_data = connection.capability()
             if status != "OK":
@@ -100,12 +109,14 @@ class BridgeImap:
         except ssl.SSLCertVerificationError as exc:
             self.__exit__(None, None, None)
             raise ConfigurationError(
-                "Bridge TLS certificate verification failed; check trust or tls_ca_file."
+                "Bridge TLS certificate verification failed; check trust or tls_ca_file.",
+                code="tls_verification",
             ) from exc
         except (imaplib.IMAP4.error, OSError, ssl.SSLError, TimeoutError) as exc:
             self.__exit__(None, None, None)
             raise RetryableError(
-                f"Could not connect to Proton Mail Bridge ({type(exc).__name__})."
+                f"Could not connect to Proton Mail Bridge ({type(exc).__name__}).",
+                code="bridge_unavailable",
             ) from exc
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:

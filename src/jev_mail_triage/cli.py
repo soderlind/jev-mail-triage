@@ -10,21 +10,20 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TypeVar
 
-from typesafe_sdk import RetryPolicy, TypeSafeClient
+from typesafe_sdk import TypeSafeClient
 
-from . import ui
+from . import paths, protocol, runtime, ui, worker
 from .classifier import JevAssessor
 from .config import DEFAULT_CONFIG_PATH, Config, load_config
 from .errors import ConfigurationError, RetryableError, TriageError
 from .gate import LocalGate, verdict_assessment
 from .imap_client import BridgeImap
-from .keychain import get_bridge_password, get_typesafe_api_key, set_secret
+from .keychain import set_secret
 from .lock import ProcessLock
 from .message import prepare_message
 from .models import LocalLabel, Outcome
 from .policy import decide
 from .service import (
-    LAST_TRAINED_KEY,
     run_apply,
     run_backfill,
     run_cycle,
@@ -36,7 +35,6 @@ from .state import StateStore
 
 logger = logging.getLogger("jev_mail_triage")
 T = TypeVar("T")
-_SERVE_TRAINING_LIMIT = 200
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -48,6 +46,13 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("serve", help="Poll continuously using the configured move setting.")
+    commands.add_parser(
+        "worker",
+        help="Background worker for the macOS app: pausable, reports status, never exits on errors.",
+    )
+    commands.add_parser(
+        "rpc", help="Answer one versioned JSON request from stdin (used by the macOS app)."
+    )
     commands.add_parser("poll", help="Run one cycle in dry-run mode.")
 
     backfill = commands.add_parser(
@@ -111,31 +116,15 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _assessor(config: Config) -> TypeSafeClient:
-    return TypeSafeClient(
-        api_key=get_typesafe_api_key(),
-        model=config.policy.model,
-        retry=RetryPolicy(max_retries=0),
-        timeout=30,
-    )
+    return runtime.make_assessor(config)
 
 
 def _with_bridge(config: Config, operation: Callable[[BridgeImap], T]) -> T:
-    for attempt in range(config.service.max_attempts):
-        try:
-            with BridgeImap(
-                config.bridge, get_bridge_password(config.bridge.account_id)
-            ) as mailbox:
-                return operation(mailbox)
-        except RetryableError:
-            if attempt + 1 >= config.service.max_attempts:
-                raise
-            delay = min(5 * (2**attempt), config.service.backoff_max_seconds)
-            time.sleep(delay)
-    raise AssertionError("Bridge retry loop exited without a result.")
+    return runtime.with_bridge(config, operation)
 
 
 def _gate(config: Config, store: StateStore) -> LocalGate | None:
-    return LocalGate(config.gate, config.policy, store) if config.gate.enabled else None
+    return runtime.make_gate(config, store)
 
 
 def _train(config: Config, limit: int) -> None:
@@ -201,27 +190,7 @@ def _serve(config: Config) -> None:
 
 
 def _serve_training(config: Config, store: StateStore, gate: LocalGate) -> None:
-    """Train in the background of serve; failures never block triage."""
-    try:
-        training = _with_bridge(
-            config,
-            lambda mailbox: run_training(config, store, mailbox, gate, _SERVE_TRAINING_LIMIT),
-        )
-    except TriageError as exc:
-        # Postpone the next attempt by a full interval instead of retrying every cycle.
-        store.set_gate_meta(LAST_TRAINED_KEY, time.time())
-        logger.warning("Local gate training skipped (%s).", type(exc).__name__)
-        return
-    logger.info(
-        "Local gate trained: spam=%d ham=%d corrections=%d new_correspondents=%d "
-        "skipped=%d missing_folders=%d",
-        training.spam,
-        training.ham,
-        training.corrections,
-        training.correspondents,
-        training.skipped,
-        len(training.missing_folders),
-    )
+    runtime.train_in_background(config, store, gate, _with_bridge)
 
 
 def _backfill(config: Config, limit: int, *, force_dry_run: bool) -> None:
@@ -297,43 +266,9 @@ def _stats(config: Config, days: int | None, *, as_json: bool) -> None:
 
 def _candidates(config: Config, limit: int, *, headers: bool, as_json: bool) -> None:
     items = StateStore.candidates(config.database_path, config.bridge.account_id, limit)
-    rows: list[dict[str, object]] = [
-        {
-            "mailbox": item.mailbox,
-            "uid_validity": item.uid_validity,
-            "uid": item.uid,
-            "message_id": item.message_id,
-            "spam_score": item.spam_score,
-            "scam_score": item.scam_score,
-            "decision_reason": item.decision_reason,
-            "model_version": item.model_version,
-            "local_verdict": item.local_verdict,
-            "local_reason": item.local_reason,
-            "status": item.status,
-            "truncated": item.truncated,
-        }
-        for item in items
-    ]
+    rows = runtime.candidate_rows(items)
     if headers and rows:
-
-        def lookup(mailbox: BridgeImap) -> list[dict[str, object]]:
-            enriched: list[dict[str, object]] = []
-            for item, row in zip(items, rows, strict=True):
-                result = dict(row)
-                validity, _ = mailbox.select(item.mailbox, readonly=True)
-                if validity != item.uid_validity:
-                    result["header_status"] = "uidvalidity_changed"
-                elif item.status != "assessed":
-                    result["header_status"] = "source_not_pending"
-                else:
-                    fetched = mailbox.fetch_headers(item.uid)
-                    result["header_status"] = "missing" if fetched is None else "available"
-                    if fetched is not None:
-                        result["headers"] = fetched
-                enriched.append(result)
-            return enriched
-
-        rows = _with_bridge(config, lookup)
+        rows = _with_bridge(config, lambda mailbox: runtime.with_headers(mailbox, items, rows))
     if as_json:
         print(json.dumps(rows, sort_keys=True))
     else:
@@ -505,6 +440,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "rpc":
+        return protocol.serve_request(protocol.Context(args.config, paths.APP_SUPPORT_DIR))
+    if args.command == "worker":
+        worker.configure_file_logging()
+        return worker.run_worker(args.config, paths.APP_SUPPORT_DIR)
     try:
         if args.command == "secret":
             account_id = None

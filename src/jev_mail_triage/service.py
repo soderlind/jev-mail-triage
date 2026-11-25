@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -95,7 +95,10 @@ def run_cycle(
     *,
     force_dry_run: bool = False,
     gate: LocalGate | None = None,
+    stop: Callable[[], bool] | None = None,
 ) -> CycleResult:
+    """Run one triage cycle. ``stop`` is checked between messages, never mid-move."""
+    should_stop = stop or (lambda: False)
     bridge = config.bridge
     inbox = mailbox.resolve_mailbox(bridge.mailbox)
     uid_validity, uid_next = mailbox.select(inbox, readonly=True)
@@ -123,12 +126,12 @@ def run_cycle(
     )
     processed = 0
     for item in store.due_items(bridge.account_id, inbox, uid_validity, config.service.batch_size):
-        if processed >= config.service.batch_size:
+        if processed >= config.service.batch_size or should_stop():
             break
         _process_item(config, store, mailbox, assessor, item, move_enabled=move_enabled, gate=gate)
         processed += 1
 
-    if move_enabled and processed < config.service.batch_size:
+    if move_enabled and processed < config.service.batch_size and not should_stop():
         for item in store.assessed_candidates(
             bridge.account_id,
             inbox,
@@ -137,6 +140,8 @@ def run_cycle(
             config.policy.scam_threshold,
             config.service.batch_size - processed,
         ):
+            if should_stop():
+                break
             _apply_assessed(config, store, mailbox, item)
             processed += 1
 
