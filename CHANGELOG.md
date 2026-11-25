@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [2.0.1] - 2026-11-25
 
+### Changed
+
+- Local gate `enforce` mode: only spam verdicts replace Jev. Mail the gate
+  considers clean (known correspondents, Bayes clean) is now still checked by
+  Jev, so phishing from a familiar sender can be caught. Authenticated
+  allowlisted senders and restored messages are still left alone without Jev.
+
 ### Fixed
 
 - Statistics: counts and percentages in chart legends no longer wrap one

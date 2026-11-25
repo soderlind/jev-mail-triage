@@ -6,7 +6,13 @@ import pytest
 
 from jev_mail_triage import features
 from jev_mail_triage.config import GateConfig, PolicyConfig
-from jev_mail_triage.gate import LocalGate, address_hash, bayes_score, verdict_assessment
+from jev_mail_triage.gate import (
+    LocalGate,
+    address_hash,
+    bayes_score,
+    replaces_jev,
+    verdict_assessment,
+)
 from jev_mail_triage.models import LocalLabel, LocalVerdict, PreparedMessage
 from jev_mail_triage.state import StateStore
 
@@ -158,6 +164,25 @@ def test_verdict_assessment_maps_to_extreme_scores() -> None:
     clean = verdict_assessment(LocalVerdict(LocalLabel.CLEAN, "known_correspondent"))
     assert (spam.spam_score, spam.scam_score, spam.reason) == (1.0, 0.0, "language_not_allowed")
     assert (clean.spam_score, clean.model_version) == (0.0, "local-gate")
+
+
+@pytest.mark.parametrize(
+    ("label", "reason", "shadow", "enforce"),
+    [
+        (LocalLabel.SPAM, "language_not_allowed", False, True),
+        (LocalLabel.CLEAN, "known_correspondent", False, False),
+        (LocalLabel.CLEAN, "local_bayes_clean", False, False),
+        (LocalLabel.CLEAN, "authenticated_allowlist", False, True),
+        (LocalLabel.CLEAN, "user_restored", True, True),
+    ],
+)
+def test_only_spam_and_settled_clean_verdicts_replace_jev(
+    label: LocalLabel, reason: str, shadow: bool, enforce: bool
+) -> None:
+    verdict = LocalVerdict(label, reason)
+    assert replaces_jev(verdict, GateConfig(mode="shadow")) is shadow
+    assert replaces_jev(verdict, GateConfig(mode="enforce")) is enforce
+    assert replaces_jev(None, GateConfig(mode="enforce")) is False
 
 
 def test_authenticated_allowlist_and_correspondents_are_clean(tmp_path: Path) -> None:

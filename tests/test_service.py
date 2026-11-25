@@ -9,7 +9,14 @@ from jev_mail_triage.errors import ConfigurationError, InputTooLargeError
 from jev_mail_triage.gate import LocalGate
 from jev_mail_triage.imap_client import FetchedMessage
 from jev_mail_triage.message import prepare_message
-from jev_mail_triage.models import Assessment, Decision, Outcome, PreparedMessage
+from jev_mail_triage.models import (
+    Assessment,
+    Decision,
+    LocalLabel,
+    LocalVerdict,
+    Outcome,
+    PreparedMessage,
+)
 from jev_mail_triage.service import (
     run_apply,
     run_cycle,
@@ -500,6 +507,18 @@ def test_enforce_mode_decides_locally_without_calling_jev(tmp_path: Path) -> Non
     assert item.local_reason == "language_not_allowed"
     # Local verdicts are never fed back as training data.
     assert store.gate_totals()["spam_examples"] == 0
+
+
+def test_enforce_mode_still_asks_jev_about_locally_clean_mail(tmp_path: Path) -> None:
+    config, store, gate, mailbox = _gate_setup(tmp_path, "enforce")
+    _add_message(mailbox, 1)
+    gate.evaluate = lambda _prepared: LocalVerdict(LocalLabel.CLEAN, "local_bayes_clean")  # type: ignore[method-assign]
+    assessor = _CountingAssessor(Assessment(0.99, 0.0, "jev-latest", "email-v1"))
+    result = run_cycle(config, store, mailbox, assessor, gate=gate)
+    assert assessor.calls == 1
+    assert result.moved == 1
+    item = store.get_item("test", "INBOX", 77, 1)
+    assert (item.local_verdict, item.decision_outcome) == ("clean", "move")
 
 
 def test_shadow_mode_records_local_verdict_but_jev_decides(tmp_path: Path) -> None:

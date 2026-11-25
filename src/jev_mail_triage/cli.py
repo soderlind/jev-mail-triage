@@ -16,7 +16,7 @@ from . import paths, protocol, runtime, ui, worker
 from .classifier import JevAssessor
 from .config import DEFAULT_CONFIG_PATH, Config, load_config
 from .errors import ConfigurationError, RetryableError, TriageError
-from .gate import LocalGate, verdict_assessment
+from .gate import LocalGate, replaces_jev, verdict_assessment
 from .imap_client import BridgeImap
 from .keychain import set_secret
 from .lock import ProcessLock
@@ -406,7 +406,7 @@ def _evaluate(config: Config, labels_path: Path) -> None:
                 else:
                     local_counts["clean"] += 1
                     local_counts["missed"] += spam_label or scam_label
-                if verdict is not None and config.gate.enforced:
+                if verdict is not None and replaces_jev(verdict, config.gate):
                     decision = decide(prepared, verdict_assessment(verdict), config.policy)
             spam_guess = assessment.spam_score >= config.policy.spam_threshold
             scam_guess = assessment.scam_score >= config.policy.scam_threshold

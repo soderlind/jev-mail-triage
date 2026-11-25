@@ -8,7 +8,8 @@ Checks run in a fixed order, cheapest and most certain first:
 4. A Bayes filter trained on the user's own folders, corrections, and Jev results.
 
 A check either returns a confident local verdict or defers to Jev. Anything the
-gate is unsure about goes to Jev.
+gate is unsure about goes to Jev. In enforce mode only spam verdicts replace Jev;
+mail the gate considers clean is still checked by Jev (see ``replaces_jev``).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ GATE_POLICY_VERSION = "gate-v1"
 CORRECTION_WEIGHT = 3.0
 JEV_CLEAN_MAX_SCORE = 0.05
 USER_RESTORED = "user_restored"
+AUTHENTICATED_ALLOWLIST = "authenticated_allowlist"
 
 # Robinson/Fisher combining, as used by SpamBayes.
 _UNKNOWN_WORD_STRENGTH = 0.45
@@ -39,6 +41,23 @@ _FAMILIAR_SENDER_HAM = 3.0
 
 def address_hash(address: str) -> str:
     return hashlib.sha256(f"addr:{address.strip().casefold()}".encode()).hexdigest()
+
+
+def replaces_jev(verdict: LocalVerdict | None, gate: GateConfig) -> bool:
+    """Whether a local verdict is used instead of asking Jev.
+
+    A restored message is always left alone, or it would be moved straight back. In
+    enforce mode spam verdicts are final, but clean verdicts still go to Jev, because a
+    familiar sender or a clean-looking text does not rule out phishing. The exception is
+    an authenticated allowlisted sender: policy leaves that mail whatever Jev says.
+    """
+    if verdict is None:
+        return False
+    if verdict.reason == USER_RESTORED:
+        return True
+    if not gate.enforced:
+        return False
+    return verdict.label == LocalLabel.SPAM or verdict.reason == AUTHENTICATED_ALLOWLIST
 
 
 def verdict_assessment(verdict: LocalVerdict) -> Assessment:
@@ -91,7 +110,7 @@ class LocalGate:
     def evaluate(self, prepared: PreparedMessage) -> LocalVerdict | None:
         if prepared.trusted_dmarc_pass:
             if is_allowlisted(prepared.sender, self._policy.allowlist):
-                return LocalVerdict(LocalLabel.CLEAN, "authenticated_allowlist")
+                return LocalVerdict(LocalLabel.CLEAN, AUTHENTICATED_ALLOWLIST)
             if prepared.sender_address and self._store.is_correspondent(
                 address_hash(prepared.sender_address)
             ):
