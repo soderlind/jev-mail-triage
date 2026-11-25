@@ -83,6 +83,7 @@ final class AppModel {
     private func startPolling() {
         pollTask = Task { [weak self] in
             await self?.refresh(full: true)
+            await self?.applyStartupBehavior()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3))
                 await self?.refresh(full: false)
@@ -184,6 +185,28 @@ final class AppModel {
     func setLaunchAtLogin(_ enabled: Bool) async {
         await perform("login", "Could not change Launch at Login") {
             try BackgroundService.setLaunchAtLogin(enabled)
+        }
+    }
+
+    var startupBehavior: StartupBehavior {
+        get {
+            access(keyPath: \.startupBehavior)
+            return UserDefaults.standard.string(forKey: StartupBehavior.defaultsKey)
+                .flatMap(StartupBehavior.init(rawValue:)) ?? .remember
+        }
+        set {
+            withMutation(keyPath: \.startupBehavior) {
+                UserDefaults.standard.set(newValue.rawValue, forKey: StartupBehavior.defaultsKey)
+            }
+        }
+    }
+
+    /// Runs once per launch, after the first refresh has established the real phase.
+    private func applyStartupBehavior() async {
+        switch startupBehavior.action(for: phase) {
+        case .start: await start()
+        case .pause: await pause()
+        case nil: break
         }
     }
 

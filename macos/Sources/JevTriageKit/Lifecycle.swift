@@ -137,3 +137,35 @@ public enum Lifecycle {
         }
     }
 }
+
+/// What the app does to the background worker when it opens.
+public enum StartupBehavior: String, CaseIterable, Sendable {
+    case remember
+    case run
+    case pause
+
+    public static let defaultsKey = "startupBehavior"
+
+    public var title: String {
+        switch self {
+        case .remember: return "Resume last state"
+        case .run: return "Start triage"
+        case .pause: return "Keep triage paused"
+        }
+    }
+
+    public enum Action: Equatable, Sendable { case start, pause }
+
+    /// The action to take once the first state refresh is known. Setup, approval and
+    /// legacy-migration states are left alone so the user resolves them explicitly.
+    public func action(for phase: Phase) -> Action? {
+        switch self {
+        case .remember:
+            return nil
+        case .run:
+            return phase == .paused || phase == .stopped ? .start : nil
+        case .pause:
+            return phase.isActive ? .pause : nil
+        }
+    }
+}

@@ -147,20 +147,27 @@ struct Legend: View {
     }
 }
 
-/// Horizontal bars for the local gate's reasons, largest first.
+/// Horizontal bars for the local gate's reasons, largest first. Plain views rather than
+/// Charts, which stacks category labels over the bars at this size.
 struct ReasonChart: View {
     let slices: [StatSlice]
 
     var body: some View {
-        Chart(slices) { slice in
-            BarMark(x: .value("Messages", slice.value), y: .value("Reason", slice.label))
-                .foregroundStyle(Color.teal.gradient)
-                .cornerRadius(3)
-                .annotation(position: .trailing) {
+        let top = max(slices.map(\.value).max() ?? 1, 1)
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+            ForEach(slices) { slice in
+                GridRow {
+                    Text(slice.label).font(.callout).lineLimit(1).fixedSize()
+                    GeometryReader { geo in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.teal.gradient)
+                            .frame(width: max(geo.size.width * CGFloat(slice.value) / CGFloat(top), 3))
+                    }
+                    .frame(height: 12)
                     Text(slice.value.formatted()).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        .gridColumnAlignment(.trailing)
                 }
+            }
         }
-        .chartXAxis(.hidden)
-        .frame(height: CGFloat(slices.count) * 28 + 8)
     }
 }

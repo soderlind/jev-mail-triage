@@ -182,3 +182,25 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: agent.plistURL.path))
     }
 }
+
+@Suite struct StartupBehaviorTests {
+    @Test func rememberNeverActs() {
+        #expect(StartupBehavior.remember.action(for: .paused) == nil)
+        #expect(StartupBehavior.remember.action(for: .running(idle: true)) == nil)
+    }
+
+    @Test func runStartsOnlyPausedOrStoppedWorkers() {
+        #expect(StartupBehavior.run.action(for: .paused) == .start)
+        #expect(StartupBehavior.run.action(for: .stopped) == .start)
+        #expect(StartupBehavior.run.action(for: .running(idle: true)) == nil)
+        #expect(StartupBehavior.run.action(for: .needsSetup) == nil)
+        #expect(StartupBehavior.run.action(for: .legacyInstalled(loaded: true)) == nil)
+    }
+
+    @Test func pausePausesAnyActiveWorker() {
+        #expect(StartupBehavior.pause.action(for: .running(idle: false)) == .pause)
+        #expect(StartupBehavior.pause.action(for: .bridgeUnavailable(message: "down", retryAt: nil)) == .pause)
+        #expect(StartupBehavior.pause.action(for: .paused) == nil)
+        #expect(StartupBehavior.pause.action(for: .needsApproval) == nil)
+    }
+}

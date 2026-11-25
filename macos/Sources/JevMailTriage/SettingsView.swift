@@ -206,17 +206,35 @@ struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
-            Toggle(
-                "Open menu bar app at login",
-                isOn: Binding(
-                    get: { model.launchAtLogin },
-                    set: { value in Task { await model.setLaunchAtLogin(value) } }))
-            Text("The background worker runs independently of this setting once started; it is listed under System Settings → General → Login Items.")
-                .font(.caption).foregroundStyle(.secondary)
-            Button("Open Login Items Settings") { BackgroundService.openLoginItemsSettings() }
-            LabeledContent("Logs", value: model.paths.logDirectory.path)
+            Section {
+                Toggle(
+                    "Open Jev Mail Triage at login",
+                    isOn: Binding(
+                        get: { model.launchAtLogin },
+                        set: { value in Task { await model.setLaunchAtLogin(value) } }))
+                Picker("When the app opens", selection: Binding(
+                    get: { model.startupBehavior }, set: { model.startupBehavior = $0 })
+                ) {
+                    ForEach(StartupBehavior.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Text(startupHint).font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("The background worker is listed under System Settings → General → Login Items and keeps running after you close or quit the app, unless you pause it.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Open Login Items Settings") { BackgroundService.openLoginItemsSettings() }
+                LabeledContent("Logs", value: model.paths.logDirectory.path)
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private var startupHint: String {
+        switch model.startupBehavior {
+        case .remember: return "Triage continues as you left it: running if it was running, paused if you paused it."
+        case .run: return "Opening the app resumes triage if it was paused or stopped."
+        case .pause: return "Opening the app pauses triage. Resume it from the menu when you are ready."
+        }
     }
 }
 
