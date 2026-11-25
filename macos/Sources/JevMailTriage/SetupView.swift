@@ -223,7 +223,8 @@ struct BridgeCheckSummary: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Label {
-                Text("Connected. Opened \(check.mailbox) read-only.")
+                Text("Connected. \(check.mailbox) is reachable.")
+                    .help("The test opens the mailbox in read-only mode, so it never marks, flags or moves mail.")
             } icon: {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
