@@ -338,6 +338,8 @@ public struct Candidate: Decodable, Identifiable, Sendable, Equatable {
     public let localReason: String?
     public let status: String
     public let truncated: Bool
+    /// When triage first saw the message (close to when it arrived).
+    public let seenAt: Double?
     /// Present only in `candidates.headers` responses; held in memory, never persisted.
     public let headerStatus: String?
     public let headers: [String: JSONValue]?

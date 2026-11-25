@@ -961,4 +961,5 @@ class StateStore:
             last_error=row["last_error"],
             local_verdict=row["local_verdict"],
             local_reason=row["local_reason"],
+            seen_at=row["created_at"],
         )

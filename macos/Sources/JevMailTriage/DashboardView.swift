@@ -333,35 +333,54 @@ struct ReviewView: View {
     @State private var result: CandidatesResult?
     @State private var headers: [CandidateKey: Candidate] = [:]
     @State private var selection = Set<CandidateKey>()
+    @State private var sortOrder = [KeyPathComparator(\Candidate.seenSort, order: .reverse)]
     @State private var error: Notice?
     @State private var loadingHeaders = false
 
+    private static let headerLimit = 50
+
+    private var rows: [Candidate] { (result?.candidates ?? []).sorted(using: sortOrder) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Messages Jev flagged for review. Subjects and senders are fetched from Bridge only when you ask, and are not saved.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Messages Jev scored above your thresholds. Subjects and senders are fetched from Bridge only when you ask, and are not saved.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text(countText).font(.caption).foregroundStyle(selection.count > Self.headerLimit ? .orange : .secondary)
+                }
                 Spacer()
+                if loadingHeaders { ProgressView().controlSize(.small) }
                 Button {
-                    Task { await showHeaders() }
+                    Task { await showHeaders(selection) }
                 } label: {
                     Label("Show Headers", systemImage: "text.magnifyingglass")
                 }
-                .disabled(selection.isEmpty || loadingHeaders)
-                .help("Fetch Subject, From, and Date for up to 50 selected messages")
-                if loadingHeaders { ProgressView().controlSize(.small) }
+                .disabled(selection.isEmpty || selection.count > Self.headerLimit || loadingHeaders)
+                .help("Fetch Subject and From for the selected messages (up to \(Self.headerLimit))")
             }
             if let error { NoticeView(notice: error) { self.error = nil } }
-            Table(result?.candidates ?? [], selection: $selection) {
-                TableColumn("Mailbox", value: \.mailbox).width(min: 80, ideal: 110)
-                TableColumn("Spam") { Text(score($0.spamScore)).monospacedDigit() }.width(55)
-                TableColumn("Scam") { Text(score($0.scamScore)).monospacedDigit() }.width(55)
-                TableColumn("Reason") { Text($0.decisionReason ?? "—") }.width(min: 90, ideal: 120)
-                TableColumn("Local") { Text($0.localVerdict ?? "—") }.width(55)
-                TableColumn("Status", value: \.status).width(min: 60, ideal: 80)
+            Table(rows, selection: $selection, sortOrder: $sortOrder) {
+                TableColumn("Seen", value: \.seenSort) { Text(seen($0)).monospacedDigit() }.width(min: 90, ideal: 120)
+                TableColumn("Spam", value: \.spamSort) { Text(score($0.spamScore)).monospacedDigit() }.width(min: 44, ideal: 52)
+                TableColumn("Scam", value: \.scamSort) { Text(score($0.scamScore)).monospacedDigit() }.width(min: 44, ideal: 52)
+                TableColumn("Reason") { Text(MailLabels.reason($0.decisionReason)) }.width(min: 90, ideal: 120)
+                TableColumn("Local gate") { Text(MailLabels.localVerdict($0.localVerdict)) }.width(min: 60, ideal: 70)
+                TableColumn("Status") { Text(MailLabels.status($0.status)) }.width(min: 70, ideal: 90)
                 TableColumn("From") { Text(header($0, "from")) }.width(min: 120, ideal: 180)
                 TableColumn("Subject") { Text(header($0, "subject")) }.width(min: 160, ideal: 260)
+            }
+            .contextMenu(forSelectionType: CandidateKey.self) { keys in
+                Button("Show Headers") { Task { await showHeaders(keys) } }
+                    .disabled(keys.isEmpty || keys.count > Self.headerLimit || loadingHeaders)
+            }
+            .overlay {
+                if let result, result.candidates.isEmpty {
+                    ContentUnavailableView(
+                        "Nothing flagged yet", systemImage: "tray",
+                        description: Text("Messages appear here when Jev scores them above your spam or scam threshold."))
+                }
             }
         }
         .padding(16)
@@ -378,6 +397,18 @@ struct ReviewView: View {
             headers = [:]
             selection = []
         }
+    }
+
+    private var countText: String {
+        let total = result?.candidates.count ?? 0
+        var text = "\(total.formatted()) messages"
+        if !selection.isEmpty { text += " · \(selection.count.formatted()) selected" }
+        if selection.count > Self.headerLimit { text += " (headers: select up to \(Self.headerLimit))" }
+        return text
+    }
+
+    private func seen(_ candidate: Candidate) -> String {
+        candidate.seenAt.map { Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened) } ?? "—"
     }
 
     private func score(_ value: Double?) -> String {
@@ -404,15 +435,23 @@ struct ReviewView: View {
         }
     }
 
-    private func showHeaders() async {
+    private func showHeaders(_ keys: Set<CandidateKey>) async {
+        guard !keys.isEmpty, keys.count <= Self.headerLimit else { return }
         loadingHeaders = true
         defer { loadingHeaders = false }
         do {
-            let fetched = try await model.fetchHeaders(Array(selection))
+            let fetched = try await model.fetchHeaders(Array(keys))
             for candidate in fetched.candidates { headers[candidate.key] = candidate }
             error = nil
         } catch {
             self.error = Notice("Could not fetch headers", error)
         }
     }
+}
+
+/// Non-optional sort keys for the review table; missing values sort first.
+extension Candidate {
+    var seenSort: Double { seenAt ?? 0 }
+    var spamSort: Double { spamScore ?? -1 }
+    var scamSort: Double { scamScore ?? -1 }
 }

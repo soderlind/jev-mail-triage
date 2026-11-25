@@ -101,6 +101,7 @@ def candidate_rows(items: Sequence[MailItem]) -> list[dict[str, object]]:
             "local_reason": item.local_reason,
             "status": item.status,
             "truncated": item.truncated,
+            "seen_at": item.seen_at,
         }
         for item in items
     ]

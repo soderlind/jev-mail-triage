@@ -65,6 +65,7 @@ class MailItem:
     last_error: str | None
     local_verdict: str | None = None
     local_reason: str | None = None
+    seen_at: float | None = None
 
 
 class LocalLabel(StrEnum):

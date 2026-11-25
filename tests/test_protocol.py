@@ -244,6 +244,7 @@ def test_header_lookup_is_limited_to_stored_candidates(
     result = response["result"]
     assert [row["uid"] for row in result["candidates"]] == [5]
     assert result["candidates"][0]["headers"]["subject"] == "Synthetic"
+    assert isinstance(result["candidates"][0]["seen_at"], float)
     assert result["not_candidates"] == [{"mailbox": "INBOX", "uid_validity": 11, "uid": 6}]
     assert calls == [1]
 
