@@ -351,6 +351,34 @@ def test_typesafe_rejection_is_reported_as_actionable_auth_error(
     assert exit_code == protocol.EXIT_CONFIGURATION
 
 
+def test_typesafe_check_works_before_any_config_is_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = protocol.Context(config_path=tmp_path / "missing.toml", state_dir=tmp_path / "state")
+
+    class Model:
+        name = "jev-latest"
+
+    class Client:
+        class models:
+            @staticmethod
+            def list() -> object:
+                return type("Listing", (), {"models": [Model()]})()
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(runtime, "make_assessor", lambda _config, _key=None: Client())
+    response, exit_code = _call(ctx, "check.typesafe", api_key="synthetic")
+    assert exit_code == 0
+    assert response["result"]["valid"] is True
+    assert response["result"]["models"] == ["jev-latest"]
+    assert not (tmp_path / "missing.toml").exists()
+
+
 def test_worker_control_pause_and_resume_bump_generation(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     paused, _ = _call(ctx, "worker.control", action="pause")

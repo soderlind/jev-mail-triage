@@ -295,7 +295,12 @@ def _check_typesafe(ctx: Context, params: dict[str, Any]) -> dict[str, Any]:
     if ctx.config_path.is_file():
         config = ctx.config()
     else:
-        config = _config_with_overrides(ctx, {})
+        # Setup checks the key before Bridge settings are saved; this check never
+        # contacts Bridge, so placeholder Bridge values only satisfy validation.
+        placeholder = {
+            "bridge": {"username": "setup-check", "port": 1143, "security_mode": "starttls"}
+        }
+        config = _config_with_overrides(ctx, placeholder)
     try:
         with runtime.make_assessor(config, api_key) as client:
             models = [model.name for model in client.models.list().models]
