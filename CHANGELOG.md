@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
 ### Added
 
 - `stats` command with totals: mail found and assessed, spam and scam/phishing
@@ -89,6 +91,7 @@ All notable changes to this project are documented here. The format is based on
 - Baseline handling, UIDVALIDITY recovery, retries with backoff, and
   crash-safe move recovery.
 
-[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...HEAD
+[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.2.0...HEAD
+[1.2.0]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/soderlind/jev-mail-triage/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/soderlind/jev-mail-triage/releases/tag/1.0.0
