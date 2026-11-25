@@ -204,31 +204,59 @@ struct StatisticsView: View {
                 .frame(maxWidth: 420)
                 if let error { NoticeView(notice: error) { self.error = nil } }
                 if let stats = result?.stats {
-                    Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 6) {
-                        row("Discovered", stats.discovered)
-                        row("Assessed", stats.assessed)
-                        row("Waiting", stats.waiting)
-                        row("Flagged (spam + scam)", stats.flagged)
-                        row("  Spam", stats.spam)
-                        row("  Scam", stats.scam)
-                        row("Moved to review", stats.moved)
-                        row("Left in Inbox", stats.leftInPlace)
-                        row("Allowlisted", stats.allowlisted)
-                        row("Too large (truncated)", stats.tooLarge)
-                        row("Restored by you", stats.restoredByUser)
-                        row("Needs attention", stats.needsAttention)
-                        Divider().gridCellColumns(2)
-                        row("Decided by Jev", stats.decidedByJev)
-                        row("Decided locally", stats.decidedLocally)
-                        row("Local gate: spam", stats.localSpam)
-                        row("Local gate: clean", stats.localClean)
-                        row("Local gate disagreed with Jev", stats.localDisagree)
-                    }
-                    if !stats.localReasons.isEmpty {
-                        Text("Local gate reasons").font(.headline)
-                        ForEach(stats.localReasons.sorted { $0.value > $1.value }, id: \.key) { reason, count in
-                            Text("\(reason): \(count)").font(.callout)
+                    StatsSummary(stats: stats)
+                    if stats.assessed == 0 {
+                        ContentUnavailableView(
+                            "No mail assessed in this period", systemImage: "chart.pie",
+                            description: Text("Charts appear once the worker has assessed new mail."))
+                    } else {
+                        HStack(alignment: .top, spacing: 16) {
+                            ChartCard("Outcome") { OutcomeChart(stats: stats) }
+                            VStack(spacing: 16) {
+                                ChartCard("Decided by") {
+                                    ShareBar(slices: [
+                                        StatSlice(id: "jev", label: "Jev", value: stats.decidedByJev),
+                                        StatSlice(id: "local", label: "Local gate", value: stats.decidedLocally),
+                                    ])
+                                }
+                                ChartCard("Local gate verdicts") {
+                                    ShareBar(slices: [
+                                        StatSlice(id: "clean", label: "Clean", value: stats.localClean),
+                                        StatSlice(id: "spam", label: "Spam", value: stats.localSpam),
+                                    ])
+                                    if stats.localDisagree > 0 {
+                                        Label("Disagreed with Jev \(stats.localDisagree.formatted()) times", systemImage: "arrow.left.arrow.right")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
                         }
+                        if !stats.reasonSlices.isEmpty {
+                            ChartCard("Local gate reasons") { ReasonChart(slices: stats.reasonSlices) }
+                        }
+                    }
+                    DisclosureGroup("All numbers") {
+                        Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 6) {
+                            row("Discovered", stats.discovered)
+                            row("Assessed", stats.assessed)
+                            row("Waiting", stats.waiting)
+                            row("Flagged (spam + scam)", stats.flagged)
+                            row("  Spam", stats.spam)
+                            row("  Scam", stats.scam)
+                            row("Moved to review", stats.moved)
+                            row("Left in Inbox", stats.leftInPlace)
+                            row("Allowlisted", stats.allowlisted)
+                            row("Too large (truncated)", stats.tooLarge)
+                            row("Restored by you", stats.restoredByUser)
+                            row("Needs attention", stats.needsAttention)
+                            Divider().gridCellColumns(2)
+                            row("Decided by Jev", stats.decidedByJev)
+                            row("Decided locally", stats.decidedLocally)
+                            row("Local gate: spam", stats.localSpam)
+                            row("Local gate: clean", stats.localClean)
+                            row("Local gate disagreed with Jev", stats.localDisagree)
+                        }
+                        .padding(.top, 6)
                     }
                 } else if error == nil {
                     ProgressView()

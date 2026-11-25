@@ -263,6 +263,52 @@ public struct StatsResult: Decodable, Sendable {
     public let stats: Statistics
 }
 
+/// One labelled share of a chart.
+public struct StatSlice: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let value: Int
+
+    public init(id: String, label: String, value: Int) {
+        self.id = id
+        self.label = label
+        self.value = value
+    }
+}
+
+extension Statistics {
+    /// Assessed mail split into non-overlapping outcomes; empty slices are dropped.
+    /// `left_in_place` includes allowlisted, truncated and restored mail, so those are
+    /// subtracted to leave the "below threshold" remainder.
+    public var outcomeSlices: [StatSlice] {
+        let otherLeft = leftInPlace - allowlisted - tooLarge - restoredByUser
+        let slices = [
+            StatSlice(id: "spam", label: "Spam", value: spam),
+            StatSlice(id: "scam", label: "Scam", value: scam),
+            StatSlice(id: "clean", label: "Below threshold", value: max(otherLeft, 0)),
+            StatSlice(id: "allowlisted", label: "Allowlisted", value: allowlisted),
+            StatSlice(id: "too_large", label: "Too large", value: tooLarge),
+            StatSlice(id: "restored", label: "Restored by you", value: restoredByUser),
+        ]
+        return slices.filter { $0.value > 0 }
+    }
+
+    /// Share of assessed mail that was flagged, or nil when nothing was assessed.
+    public var flaggedRate: Double? {
+        assessed > 0 ? Double(flagged) / Double(assessed) : nil
+    }
+
+    /// Local gate reasons, largest first, with readable labels.
+    public var reasonSlices: [StatSlice] {
+        localReasons
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .map { key, value in
+                let words = key.replacingOccurrences(of: "local_", with: "").replacingOccurrences(of: "_", with: " ")
+                return StatSlice(id: key, label: words.prefix(1).uppercased() + words.dropFirst(), value: value)
+            }
+    }
+}
+
 public struct CandidateKey: Hashable, Codable, Sendable {
     public let mailbox: String
     public let uidValidity: Int

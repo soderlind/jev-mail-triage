@@ -107,3 +107,35 @@ func fixture(_ name: String) throws -> Data {
         #expect(folderChoices(["INBOX"], current: "") == ["INBOX"])
     }
 }
+
+@Suite struct StatisticsChartTests {
+    private func stats(_ overrides: String) throws -> Statistics {
+        var json = try JSONSerialization.jsonObject(with: try fixture("stats")) as! [String: Any]
+        var result = json["result"] as! [String: Any]
+        var values = result["stats"] as! [String: Any]
+        let extra = try JSONSerialization.jsonObject(with: Data(overrides.utf8)) as! [String: Any]
+        values.merge(extra) { $1 }
+        result["stats"] = values
+        json["result"] = result
+        let data = try JSONSerialization.data(withJSONObject: json)
+        return try ResponseDecoder.decode(data, expectingID: "st", as: StatsResult.self).stats
+    }
+
+    @Test func outcomeSlicesPartitionAssessedMail() throws {
+        let s = try stats(#"{"assessed": 100, "flagged": 6, "spam": 4, "scam": 2, "left_in_place": 94, "allowlisted": 3, "too_large": 1, "restored_by_user": 0}"#)
+        #expect(s.outcomeSlices.map(\.id) == ["spam", "scam", "clean", "allowlisted", "too_large"])
+        #expect(s.outcomeSlices.reduce(0) { $0 + $1.value } == 100)
+        #expect(s.flaggedRate == 0.06)
+    }
+
+    @Test func emptyPeriodHasNoSlicesOrRate() throws {
+        let s = try stats("{}")
+        #expect(s.outcomeSlices.isEmpty)
+        #expect(s.flaggedRate == nil)
+    }
+
+    @Test func reasonsAreSortedAndReadable() throws {
+        let s = try stats(#"{"local_reasons": {"near_duplicate_junk": 1, "local_bayes_clean": 128}}"#)
+        #expect(s.reasonSlices.map(\.label) == ["Bayes clean", "Near duplicate junk"])
+    }
+}
