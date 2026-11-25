@@ -340,6 +340,28 @@ python3 -m venv --clear .venv
 
 Your config, Keychain secrets, and state database are not affected.
 
+## macOS app (preview)
+
+`JevMailTriage.app` is a menu bar app that runs the same engine with its own
+bundled Python, so you don't need a Python install. It needs macOS 27 or later
+on Apple Silicon.
+
+It includes:
+
+- Guided setup with Bridge and TypeSafe connection checks.
+- Start and pause controls.
+- Statistics.
+- A review list with headers fetched on demand.
+- Settings for policy and local gate options.
+
+The background worker runs as a LaunchAgent registered with `SMAppService`.
+The app detects the CLI LaunchAgent below and migrates from it only when you
+choose to. Dry run stays the default.
+
+No signed release is published yet. Build it from source with
+`macos/scripts/build-app.sh`. See [docs/macos-app.md](docs/macos-app.md) for
+build, signing, install, migration and the manual test checklist.
+
 ## Run in the background
 
 The best way to keep the service running is a macOS LaunchAgent. It starts
@@ -551,6 +573,22 @@ python -m ruff check src tests
 The tests do not connect to Proton Mail Bridge, access a real mailbox, call
 TypeSafe, move messages, or activate a LaunchAgent.
 
+The macOS app has its own Swift tests (`cd macos && swift test`). For its build
+scripts, see [docs/macos-app.md](docs/macos-app.md).
+
 ## License
 
 [MIT](LICENSE)
+
+## AI contribution attribution
+
+Parts of this project were developed with AI assistance. AI-assisted commits
+include a trailer in this format:
+
+    Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]
+
+`AGENT_NAME` is the AI tool and `MODEL_VERSION` is the specific model. The
+optional tools are specialized analysis tools; basic development tools such as
+git, compilers and editors are not listed.
+
+Example: `Assisted-by: Claude:claude-3-opus coccinelle sparse`

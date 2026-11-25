@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- macOS menu bar app (`macos/`, preview) with a native SwiftUI interface:
+  - Setup with read-only Bridge and TypeSafe checks, and an explanation of what
+    is sent to TypeSafe.
+  - Dashboard with running, paused, Bridge unavailable and error states.
+  - Statistics, and a review list with headers fetched on demand.
+  - Settings for policy, local gate and service options.
+  - An explicit confirmation before turning on automatic moves.
+  - Launch at login.
+- The app bundles the engine as a PyInstaller helper, so no Python install is
+  needed. It requires macOS 27 or later on Apple Silicon.
+- Background worker as an `SMAppService` LaunchAgent. It uses the existing
+  single-worker database lock, honours pause, resume and reload through a
+  control file, and publishes a status heartbeat.
+- Explicit migration from the CLI LaunchAgent. It stops and renames the old
+  agent, and has the helper re-save the Keychain items so it owns them.
+- Versioned JSON protocol (`jev-mail-triage rpc`) with structured errors and
+  distinct exit codes, plus the `worker` command.
+- Build, inside-out signing, DMG and notarization scripts (`packaging/`,
+  `macos/scripts/`).
+
+The CLI and its `serve` LaunchAgent keep working as before.
+
 ## [1.2.0] - 2026-11-25
 
 ### Added
