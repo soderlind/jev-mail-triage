@@ -44,6 +44,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if model.hasUnsavedSettings {
+            let alert = NSAlert()
+            alert.messageText = "Discard unsaved settings?"
+            alert.informativeText = "You changed settings without saving. Quitting discards those changes."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Discard and Quit")
+            NSApp.activate()
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+            model.revertSettings()
+        }
         guard model.phase.isActive else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Background triage keeps running"

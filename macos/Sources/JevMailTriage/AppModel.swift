@@ -226,19 +226,52 @@ final class AppModel {
 
     // MARK: Settings
 
-    func saveSettings(_ draft: AppConfig) async -> Bool {
-        var saved = false
+    /// Edits in the Settings window. Kept here (memory only) so closing the window does
+    /// not silently discard them; Save or Revert clears them.
+    var settingsDraft: AppConfig?
+    var pendingBridgePassword = ""
+    var pendingAPIKey = ""
+
+    var hasUnsavedSettings: Bool {
+        (settingsDraft != nil && settingsDraft != config) || !pendingBridgePassword.isEmpty || !pendingAPIKey.isEmpty
+    }
+
+    /// Starts editing from the saved config, keeping any unsaved draft.
+    func beginEditingSettings() {
+        if settingsDraft == nil { settingsDraft = config }
+    }
+
+    func revertSettings() {
+        settingsDraft = config
+        pendingBridgePassword = ""
+        pendingAPIKey = ""
+    }
+
+    /// Saves the draft and any new secrets together, then reloads the worker once.
+    func saveSettings() async {
+        guard let draft = settingsDraft else { return }
+        let password = pendingBridgePassword
+        let apiKey = pendingAPIKey
         await perform("settings", "Settings were not saved") {
-            let patch: JSONValue = [
-                "bridge": draft.bridge.patch, "service": draft.service.patch,
-                "policy": draft.policy.patch, "gate": draft.gate.patch,
-            ]
-            let result = try await helper.call("config.set", params: ["patch": patch], as: ConfigResult.self)
-            config = result.config
+            if draft != config {
+                let patch: JSONValue = [
+                    "bridge": draft.bridge.patch, "service": draft.service.patch,
+                    "policy": draft.policy.patch, "gate": draft.gate.patch,
+                ]
+                let result = try await helper.call("config.set", params: ["patch": patch], as: ConfigResult.self)
+                config = result.config
+            }
+            if !password.isEmpty {
+                try await storeSecret("bridge-password", value: password, accountID: draft.bridge.accountId)
+                pendingBridgePassword = ""
+            }
+            if !apiKey.isEmpty {
+                try await storeSecret("typesafe-api-key", value: apiKey, accountID: nil)
+                pendingAPIKey = ""
+            }
+            settingsDraft = config
             _ = try? await helper.call("worker.control", params: ["action": "reload"], as: ControlResult.self)
-            saved = true
         }
-        return saved
     }
 
     /// Turns automatic moves on or off. Enabling sends the explicit confirmation flag.
@@ -248,6 +281,8 @@ final class AppModel {
             if enabled { params["confirm_enable_moves"] = true }
             let result = try await helper.call("config.set", params: params, as: ConfigResult.self)
             config = result.config
+            // Keep an open Settings draft in step, so this is not shown as an unsaved edit.
+            settingsDraft?.policy.moveEnabled = enabled
             _ = try? await helper.call("worker.control", params: ["action": "reload"], as: ControlResult.self)
         }
     }
@@ -256,13 +291,6 @@ final class AppModel {
         var params: [String: JSONValue] = ["name": .string(name), "value": .string(value)]
         if let accountID { params["account_id"] = .string(accountID) }
         _ = try await helper.call("secrets.set", params: params, timeout: 60, as: StoredSecret.self)
-    }
-
-    func updateSecret(_ name: String, value: String) async {
-        let account = config?.bridge.accountId
-        await perform("secret", "The secret was not saved") {
-            try await storeSecret(name, value: value, accountID: account)
-        }
     }
 
     // MARK: Setup

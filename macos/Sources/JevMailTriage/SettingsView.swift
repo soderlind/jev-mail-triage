@@ -1,15 +1,15 @@
 import JevTriageKit
 import SwiftUI
 
-/// Edits the helper's allowlisted settings. `move_enabled` changes only via the explicit
-/// dashboard action, and secrets go straight to the helper's Keychain items.
+/// Edits the helper's allowlisted settings. `move_enabled` changes only via an explicit,
+/// confirmed action, and secrets go straight to the helper's Keychain items.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var draft: AppConfig?
 
     var body: some View {
+        @Bindable var model = model
         Group {
-            if let binding = Binding($draft) {
+            if let binding = Binding($model.settingsDraft) {
                 TabView {
                     BridgeSettingsTab(config: binding).tabItem { Label("Bridge", systemImage: "network") }
                     PolicySettingsTab(config: binding).tabItem { Label("Policy", systemImage: "slider.horizontal.3") }
@@ -26,42 +26,54 @@ struct SettingsView: View {
             }
         }
         .frame(width: 560, height: 520)
-        .onAppear { draft = model.config }
+        .background(WindowEditedMarker(edited: model.hasUnsavedSettings))
+        .onAppear { model.beginEditingSettings() }
         .task { await model.loadFolders() }
-        .onChange(of: model.config) { _, newValue in if draft == nil { draft = newValue } }
+        .onChange(of: model.config) { model.beginEditingSettings() }
     }
 
     private var footer: some View {
         HStack {
             if let notice = model.notice {
                 Text(notice.message).font(.caption).foregroundStyle(.orange).lineLimit(2)
-            } else {
-                Text("Saving restarts the background worker’s current cycle with the new settings.")
+            } else if model.hasUnsavedSettings {
+                Label("Unsaved changes. Saving applies them from the worker’s next check.", systemImage: "circle.fill")
                     .font(.caption).foregroundStyle(.secondary)
+                    .symbolRenderingMode(.multicolor)
             }
             Spacer()
-            Button("Revert") { draft = model.config }.disabled(draft == model.config)
-            Button("Save") {
-                guard let draft else { return }
-                Task { if await model.saveSettings(draft) { self.draft = model.config } }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(draft == model.config || model.isBusy("settings"))
+            if model.isBusy("settings") { ProgressView().controlSize(.small) }
+            Button("Revert") { model.revertSettings() }.disabled(!model.hasUnsavedSettings)
+            Button("Save") { Task { await model.saveSettings() } }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut("s")
+                .disabled(!model.hasUnsavedSettings || model.isBusy("settings"))
         }
         .padding(12)
         .background(.bar)
     }
 }
 
+/// Shows the standard "edited" dot in the window's close button while there are unsaved changes.
+private struct WindowEditedMarker: NSViewRepresentable {
+    let edited: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { view.window?.isDocumentEdited = edited }
+    }
+}
+
 struct BridgeSettingsTab: View {
     @Environment(AppModel.self) private var model
     @Binding var config: AppConfig
-    @State private var password = ""
     @State private var check: BridgeCheck?
     @State private var checkError: Notice?
     @State private var checking = false
 
     var body: some View {
+        @Bindable var model = model
         Form {
             Section {
                 TextField("Username", text: $config.bridge.username)
@@ -75,15 +87,9 @@ struct BridgeSettingsTab: View {
                     title: "Mailbox", selection: $config.bridge.mailbox, folders: model.folders,
                     loading: model.loadingFolders, reload: { Task { await model.loadFolders(force: true) } })
                 CertificatePicker(path: $config.bridge.tlsCaFile)
-            }
-            Section("Bridge password") {
-                SecureField("New password", text: $password, prompt: Text("Leave empty to keep the saved one"))
-                Button("Save Password to Keychain") {
-                    let value = password
-                    password = ""
-                    Task { await model.updateSecret("bridge-password", value: value) }
-                }
-                .disabled(password.isEmpty)
+                SecureField(
+                    "Bridge password", text: $model.pendingBridgePassword,
+                    prompt: Text(model.bridgeSecretPresent ? "Saved in Keychain — type to replace" : "From Bridge, not your Proton password"))
             }
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -96,6 +102,8 @@ struct BridgeSettingsTab: View {
                     Spacer(minLength: 0)
                 }
                 if let checkError { NoticeView(notice: checkError) { self.checkError = nil } }
+            } footer: {
+                Text("Tests the settings above, including unsaved changes.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -105,6 +113,7 @@ struct BridgeSettingsTab: View {
         checking = true
         defer { checking = false }
         do {
+            let password = model.pendingBridgePassword
             check = try await model.checkBridge(config.bridge, password: password.isEmpty ? nil : password)
             checkError = nil
         } catch {
@@ -117,21 +126,31 @@ struct BridgeSettingsTab: View {
 struct PolicySettingsTab: View {
     @Environment(AppModel.self) private var model
     @Binding var config: AppConfig
-    @State private var apiKey = ""
+    @State private var confirmMoves = false
 
     var body: some View {
+        @Bindable var model = model
         Form {
             Section {
                 LabeledContent("Automatic moves") {
-                    Text(config.policy.moveEnabled ? "On" : "Off (dry run)")
-                        .foregroundStyle(config.policy.moveEnabled ? .orange : .secondary)
+                    HStack {
+                        Text(model.isDryRun ? "Off (dry run)" : "On")
+                            .foregroundStyle(model.isDryRun ? .secondary : Color.orange)
+                        if model.isBusy("moves") { ProgressView().controlSize(.small) }
+                        if model.isDryRun {
+                            Button("Enable…") { confirmMoves = true }
+                        } else {
+                            Button("Switch to Dry Run") { Task { await model.setMoves(enabled: false) } }
+                        }
+                    }
+                    .disabled(model.isBusy("moves"))
                 }
-                Text("Change this from the dashboard, which asks for confirmation.")
-                    .font(.caption).foregroundStyle(.secondary)
                 FolderField(
                     title: "Review folder", selection: $config.policy.reviewFolder, folders: model.folders,
                     missingNote: "created on first move",
                     loading: model.loadingFolders, reload: { Task { await model.loadFolders(force: true) } })
+            } footer: {
+                Text("Takes effect immediately. Mail is moved, never deleted.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Thresholds") {
                 ThresholdField(title: "Spam threshold", value: $config.policy.spamThreshold)
@@ -145,17 +164,18 @@ struct PolicySettingsTab: View {
                 Text("Allowlisting requires a trusted authserv-id so forged senders are not skipped.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("TypeSafe API key") {
-                SecureField("New API key", text: $apiKey, prompt: Text("Leave empty to keep the saved one"))
-                Button("Save Key to Keychain") {
-                    let value = apiKey
-                    apiKey = ""
-                    Task { await model.updateSecret("typesafe-api-key", value: value) }
-                }
-                .disabled(apiKey.isEmpty)
+            Section("TypeSafe") {
+                SecureField(
+                    "API key", text: $model.pendingAPIKey,
+                    prompt: Text(model.typeSafeSecretPresent ? "Saved in Keychain — type to replace" : "sk-…"))
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog("Enable automatic moves?", isPresented: $confirmMoves) {
+            Button("Enable Automatic Moves") { Task { await model.setMoves(enabled: true) } }
+        } message: {
+            Text(MovesCopy.confirmation(reviewFolder: model.config?.policy.reviewFolder ?? "review"))
+        }
     }
 }
 

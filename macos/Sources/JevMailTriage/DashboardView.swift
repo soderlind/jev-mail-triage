@@ -46,6 +46,14 @@ struct DashboardView: View {
     }
 }
 
+/// Shared wording for the confirmation shown wherever automatic moves can be enabled.
+enum MovesCopy {
+    static func confirmation(reviewFolder: String) -> String {
+        "Messages Jev scores above your thresholds will be moved from the Inbox to “\(reviewFolder)”. "
+            + "Nothing is ever deleted, and you can move a message back to train the local gate."
+    }
+}
+
 struct OverviewView: View {
     @Environment(AppModel.self) private var model
     @Binding var showSetup: Bool
@@ -87,9 +95,7 @@ struct OverviewView: View {
         .confirmationDialog("Enable automatic moves?", isPresented: $confirmMoves) {
             Button("Enable Automatic Moves") { Task { await model.setMoves(enabled: true) } }
         } message: {
-            Text(
-                "Messages Jev scores above your thresholds will be moved from the Inbox to “\(model.config?.policy.reviewFolder ?? "review")”. "
-                    + "Nothing is ever deleted, and you can move a message back to train the local gate.")
+            Text(MovesCopy.confirmation(reviewFolder: model.config?.policy.reviewFolder ?? "review"))
         }
         .confirmationDialog("Turn off the background worker?", isPresented: $confirmTurnOff) {
             Button("Turn Off", role: .destructive) { Task { await model.turnOffBackground() } }
