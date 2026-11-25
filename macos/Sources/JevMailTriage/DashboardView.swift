@@ -51,6 +51,7 @@ struct OverviewView: View {
     @Binding var showSetup: Bool
     @State private var confirmMoves = false
     @State private var confirmMigration = false
+    @State private var confirmTurnOff = false
 
     var body: some View {
         ScrollView {
@@ -66,9 +67,7 @@ struct OverviewView: View {
                             Button("Open Setup") { showSetup = true }
                         }
                         if registeredAndNotLegacy {
-                            Button("Turn Off Background Worker…", role: .destructive) {
-                                Task { await model.turnOffBackground() }
-                            }
+                            Button("Turn Off Background Worker…", role: .destructive) { confirmTurnOff = true }
                             .buttonStyle(.link)
                             .help("Unregisters the LaunchAgent. Triage stops until you choose Start.")
                         }
@@ -91,6 +90,13 @@ struct OverviewView: View {
             Text(
                 "Messages Jev scores above your thresholds will be moved from the Inbox to “\(model.config?.policy.reviewFolder ?? "review")”. "
                     + "Nothing is ever deleted, and you can move a message back to train the local gate.")
+        }
+        .confirmationDialog("Turn off the background worker?", isPresented: $confirmTurnOff) {
+            Button("Turn Off", role: .destructive) { Task { await model.turnOffBackground() } }
+        } message: {
+            Text(
+                "Triage stops completely and the worker is removed from Login Items. New mail is not checked until you choose Start. "
+                    + "To stop for a while instead, use Pause.")
         }
         .confirmationDialog("Migrate the legacy LaunchAgent?", isPresented: $confirmMigration) {
             Button("Stop Legacy Agent and Migrate") { Task { await model.migrateLegacy() } }
