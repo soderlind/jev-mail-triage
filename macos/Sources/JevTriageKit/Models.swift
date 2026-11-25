@@ -160,11 +160,14 @@ public struct WorkerError: Codable, Equatable, Sendable {
 
 public struct LastCycle: Codable, Equatable, Sendable {
     public let finishedAt: Double
-    public let baseline: Bool
+    /// `steady`, or `baseline`/`rebaseline` when existing mail was recorded without assessment.
+    public let baseline: String
     public let discovered: Int
     public let assessed: Int
     public let moved: Int
     public let attention: Int
+
+    public var recordedBaseline: Bool { baseline != "steady" }
 }
 
 /// Contents of `worker-status.json`, written by the background worker.

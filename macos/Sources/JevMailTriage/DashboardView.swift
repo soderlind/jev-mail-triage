@@ -152,7 +152,7 @@ struct OverviewView: View {
                 GridRow { Text("Assessed"); Text("\(cycle.assessed)") }
                 GridRow { Text("Moved"); Text("\(cycle.moved)") }
                 GridRow { Text("Needs attention"); Text("\(cycle.attention)") }
-                if cycle.baseline { GridRow { Text("Baseline"); Text("Existing mail recorded, not assessed") } }
+                if cycle.recordedBaseline { GridRow { Text("Baseline"); Text("Existing mail recorded, not assessed") } }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

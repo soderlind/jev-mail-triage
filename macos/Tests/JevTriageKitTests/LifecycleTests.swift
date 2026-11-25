@@ -109,6 +109,7 @@ import Testing
         let status = try #require(files.status())
         #expect(status.state == "bridge_unavailable")
         #expect(status.lastCycle?.moved == 1)
+        #expect(status.lastCycle?.recordedBaseline == false)
         #expect(status.settings?["gate"]?.stringValue == "shadow")
         #expect(files.control() == WorkerControl(paused: true, generation: 4))
     }

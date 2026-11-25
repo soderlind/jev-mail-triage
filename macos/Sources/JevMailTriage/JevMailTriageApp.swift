@@ -21,14 +21,18 @@ struct JevMailTriageApp: App {
         .defaultSize(width: 920, height: 620)
         .defaultLaunchBehavior(.presented)
 
-        Settings {
+        // A regular window rather than a `Settings` scene: `SettingsLink` does not reliably
+        // open from a MenuBarExtra in an LSUIElement app.
+        Window("Jev Mail Triage Settings", id: WindowID.settings) {
             SettingsView().environment(delegate.model)
         }
+        .windowResizability(.contentSize)
     }
 }
 
 enum WindowID {
     static let dashboard = "dashboard"
+    static let settings = "settings"
 }
 
 /// Closing windows keeps triage running (it lives in the LaunchAgent, not in this process).

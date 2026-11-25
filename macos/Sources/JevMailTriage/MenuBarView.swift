@@ -7,14 +7,19 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PhaseHeader(phase: model.phase)
+            PhaseHeader(phase: model.phase, nextCheck: model.worker?.nextCycleAt)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PhaseHeader.tint(model.phase).opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
             if model.configured {
-                Label(
-                    model.isDryRun ? "Dry run: assessing only, nothing is moved" : "Automatic moves are on",
-                    systemImage: model.isDryRun ? "eye" : "tray.and.arrow.down"
-                )
+                Label {
+                    Text(model.isDryRun ? "Dry run: assessing only, nothing is moved" : "Automatic moves are on")
+                        .foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: model.isDryRun ? "eye" : "tray.and.arrow.down")
+                        .foregroundStyle(model.isDryRun ? Color.secondary : Color.orange)
+                }
                 .font(.callout)
-                .foregroundStyle(model.isDryRun ? Color.secondary : Color.orange)
             }
             if let cycle = model.worker?.lastCycle {
                 Text(
@@ -31,8 +36,9 @@ struct MenuBarView: View {
             LifecycleButtons()
             Divider()
             HStack {
-                Button("Dashboard") { open() }
-                SettingsLink { Text("Settings…") }
+                Button("Dashboard") { open(WindowID.dashboard) }
+                Button("Settings…") { open(WindowID.settings) }
+                    .keyboardShortcut(",")
                     .disabled(!model.configured)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
@@ -40,12 +46,14 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 320)
+        // The default glass panel lets busy windows show through; keep text legible.
+        .background(Color(nsColor: .windowBackgroundColor))
         .task { await model.refresh(full: true) }
     }
 
-    private func open() {
-        openWindow(id: WindowID.dashboard)
+    private func open(_ id: String) {
         NSApp.activate()
+        openWindow(id: id)
     }
 }
 
@@ -91,29 +99,37 @@ struct LifecycleButtons: View {
 
 struct PhaseHeader: View {
     let phase: Phase
+    var nextCheck: Double? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label(phase.title, systemImage: phase.symbol)
-                .font(.headline)
-                .foregroundStyle(color)
+            Label {
+                Text(phase.title).foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: phase.symbol).foregroundStyle(Self.tint(phase))
+            }
+            .font(.headline)
             if let detail {
                 Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private var color: Color {
+    static func tint(_ phase: Phase) -> Color {
         switch phase {
         case .running: return .green
         case .error, .unresponsive: return .red
         case .bridgeUnavailable, .waitingForLock, .needsApproval, .legacyInstalled, .needsSetup: return .orange
-        default: return .primary
+        default: return .secondary
         }
     }
 
     private var detail: String? {
         switch phase {
+        case .running(let idle):
+            guard idle, let nextCheck else { return idle ? nil : "Assessing new mail." }
+            return "Next check \(Date(timeIntervalSince1970: nextCheck).formatted(.relative(presentation: .named)))."
+        case .starting: return "Waiting for the background worker to report."
         case .needsSetup: return "Connect Proton Mail Bridge and add your TypeSafe API key."
         case .legacyInstalled(let loaded):
             return loaded
