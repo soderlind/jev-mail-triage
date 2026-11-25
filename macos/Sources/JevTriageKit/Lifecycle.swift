@@ -6,6 +6,12 @@ public enum AgentRegistration: Equatable, Sendable {
     case enabled
     case requiresApproval
     case notFound
+
+    /// `SMAppService` reports a never-registered agent as `.notFound`, the same status it
+    /// uses when the plist is missing. Only a missing plist is a real error.
+    public func resolved(agentPlistPresent: Bool) -> AgentRegistration {
+        self == .notFound && agentPlistPresent ? .notRegistered : self
+    }
 }
 
 /// What the app shows as the overall state; derived purely from observable inputs.

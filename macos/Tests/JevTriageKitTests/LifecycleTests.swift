@@ -44,6 +44,13 @@ import Testing
         }
     }
 
+    @Test func neverRegisteredAgentIsStoppedNotMissing() {
+        let registration = AgentRegistration.notFound.resolved(agentPlistPresent: true)
+        #expect(Lifecycle.phase(inputs(registration: registration)) == .stopped)
+        #expect(AgentRegistration.notFound.resolved(agentPlistPresent: false) == .notFound)
+        #expect(AgentRegistration.enabled.resolved(agentPlistPresent: true) == .enabled)
+    }
+
     @Test func workerStatesMapToPhases() {
         #expect(Lifecycle.phase(inputs(worker: status("idle"))) == .running(idle: true))
         #expect(Lifecycle.phase(inputs(worker: status("running"))) == .running(idle: false))

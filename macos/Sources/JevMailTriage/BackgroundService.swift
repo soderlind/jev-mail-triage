@@ -8,13 +8,16 @@ enum BackgroundService {
     static let agentPlistName = "com.soderlind.JevMailTriage.worker.plist"
 
     static func registration() -> AgentRegistration {
+        let raw: AgentRegistration
         switch SMAppService.agent(plistName: agentPlistName).status {
-        case .notRegistered: return .notRegistered
-        case .enabled: return .enabled
-        case .requiresApproval: return .requiresApproval
-        case .notFound: return .notFound
-        @unknown default: return .notFound
+        case .notRegistered: raw = .notRegistered
+        case .enabled: raw = .enabled
+        case .requiresApproval: raw = .requiresApproval
+        case .notFound: raw = .notFound
+        @unknown default: raw = .notFound
         }
+        let plist = Bundle.main.bundleURL.appending(path: "Contents/Library/LaunchAgents/\(agentPlistName)")
+        return raw.resolved(agentPlistPresent: FileManager.default.fileExists(atPath: plist.path))
     }
 
     /// Registers the agent. Returns the resulting status; `.requiresApproval` means the user
