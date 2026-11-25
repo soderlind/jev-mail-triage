@@ -9,7 +9,13 @@ from jev_mail_triage.gate import LocalGate
 from jev_mail_triage.imap_client import FetchedMessage
 from jev_mail_triage.message import prepare_message
 from jev_mail_triage.models import Assessment, Decision, Outcome
-from jev_mail_triage.service import run_cycle, run_training, training_due
+from jev_mail_triage.service import (
+    run_apply,
+    run_cycle,
+    run_skip_backlog,
+    run_training,
+    training_due,
+)
 from jev_mail_triage.state import StateStore
 
 MESSAGE = (
@@ -248,6 +254,45 @@ def test_move_mode_moves_only_scored_message_to_review_folder(tmp_path: Path) ->
     assert not mailbox.boxes["INBOX"]
     assert len(mailbox.boxes["Jev Review"]) == 1
     assert store.counts("test", "INBOX")["moved"] == 1
+
+
+def test_apply_moves_stored_decisions_without_assessing(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=True)
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    _add_message(mailbox, 1)
+    _add_message(mailbox, 2)
+    run_cycle(config, store, mailbox, _FakeAssessor(), force_dry_run=True)
+    assert len(mailbox.boxes["INBOX"]) == 2
+
+    result = run_apply(config, store, mailbox, limit=1)
+    assert (result.assessed, result.moved) == (1, 1)
+    assert list(mailbox.boxes["INBOX"]) == [2]
+    assert run_apply(config, store, mailbox, limit=10).moved == 1
+    assert not mailbox.boxes["INBOX"]
+
+
+def test_apply_refuses_when_moves_are_disabled(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=False)
+    with pytest.raises(ConfigurationError, match="move_enabled"):
+        run_apply(config, StateStore(config.database_path), _FakeMailbox(frozenset()), limit=1)
+
+
+def test_skip_backlog_leaves_old_mail_and_assesses_only_new_arrivals(tmp_path: Path) -> None:
+    config = _config(tmp_path / "state.sqlite3", moves=False)
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    _add_message(mailbox, 1)
+    _add_message(mailbox, 2)
+
+    assert run_skip_backlog(config, store, mailbox) == 2
+    assert run_skip_backlog(config, store, mailbox) == 0
+    _add_message(mailbox, 3)
+    result = run_cycle(config, store, mailbox, _FakeAssessor())
+    assert (result.discovered, result.assessed) == (1, 1)
+    assert store.get_item("test", "INBOX", 77, 1) is None
 
 
 def test_uidplus_fallback_copies_verifies_then_expunge_source(tmp_path: Path) -> None:

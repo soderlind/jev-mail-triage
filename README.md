@@ -152,6 +152,8 @@ got them right.
 | `candidates --headers`            | Same, plus subject, sender, and date fetched from Bridge      | No                          |
 | `backfill --limit N`              | Assesses up to N existing messages, newest first (max 1,000)  | Only if moves are enabled   |
 | `backfill --limit N --dry-run`    | Same, but never moves anything                                | Never                       |
+| `apply --limit N`                 | Moves stored move decisions now, without TypeSafe calls (default 100) | Yes; needs moves enabled |
+| `skip-backlog`                    | Marks Inbox mail not yet assessed as seen; only new arrivals are assessed | No              |
 | `retry --limit N`                 | Tries failed assessments again                                | No (they are re-queued)     |
 | `train --limit N`                 | Trains the local gate from your folders (default 500 per folder) | Never (read-only)        |
 | `evaluate --labels FILE.csv`      | Measures accuracy against labelled test emails                | No                          |
@@ -316,7 +318,11 @@ outcome are never retried automatically; check those messages by hand.
 
 **`move_decision` is greater than zero, but nothing moved**
 That is expected in dry-run mode. See
-[Turning on automatic moves](#turning-on-automatic-moves).
+[Turning on automatic moves](#turning-on-automatic-moves). With moves enabled,
+`serve` handles new mail first and moves earlier decisions only when a cycle has
+room left, so a large backlog can delay them for hours. To catch up, stop
+`serve`, then run `skip-backlog` (optional; leaves unassessed older mail alone)
+and `apply --limit 1000`, and start `serve` again.
 
 **"Could not create review folder 'Jev Review'"**
 Bridge rejects new top-level folders. Set

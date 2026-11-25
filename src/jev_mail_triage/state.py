@@ -192,6 +192,17 @@ class StateStore:
                 return "rebaseline"
             return "steady"
 
+    def skip_backlog(self, account_id: str, mailbox: str, uid_validity: int, last_uid: int) -> None:
+        """Advance the cursor so UIDs up to last_uid are never discovered or assessed."""
+        with self._connect() as db:
+            db.execute(
+                """
+                UPDATE mailboxes SET last_seen_uid=MAX(last_seen_uid, ?)
+                WHERE account_id=? AND mailbox=? AND uid_validity=?
+                """,
+                (last_uid, account_id, mailbox, uid_validity),
+            )
+
     def cursor(self, account_id: str, mailbox: str) -> int:
         with self._connect() as db:
             row = db.execute(

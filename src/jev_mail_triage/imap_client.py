@@ -82,6 +82,10 @@ class BridgeImap:
                 connection = imaplib.IMAP4(self.config.host, self.config.port, timeout=30)
                 self._connection = connection
                 connection.starttls(ssl_context=context)
+            status, _ = connection.login(self.config.username, self._password)
+            if status != "OK":
+                raise RetryableError("Bridge IMAP authentication failed.")
+            # Bridge advertises MOVE and UIDPLUS only after authentication.
             status, capability_data = connection.capability()
             if status != "OK":
                 raise RetryableError("Bridge did not return IMAP capabilities.")
@@ -89,9 +93,6 @@ class BridgeImap:
             self._capabilities = frozenset(
                 word.decode("ascii", errors="ignore").upper() for word in capability_text.split()
             )
-            status, _ = connection.login(self.config.username, self._password)
-            if status != "OK":
-                raise RetryableError("Bridge IMAP authentication failed.")
             return self
         except TriageError:
             self.__exit__(None, None, None)

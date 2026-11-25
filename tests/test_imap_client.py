@@ -37,6 +37,31 @@ def _client() -> tuple[BridgeImap, _Connection]:
     return client, connection
 
 
+def test_capabilities_are_read_after_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Imap:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.logged_in = False
+
+        def starttls(self, **_kwargs: object) -> None:
+            pass
+
+        def capability(self) -> tuple[str, list[bytes]]:
+            return "OK", [b"IMAP4rev1 MOVE UIDPLUS" if self.logged_in else b"IMAP4rev1"]
+
+        def login(self, *_args: object) -> tuple[str, list[bytes]]:
+            self.logged_in = True
+            return "OK", []
+
+        def logout(self) -> None:
+            pass
+
+    monkeypatch.setattr("jev_mail_triage.imap_client.imaplib.IMAP4", _Imap)
+    client, _ = _client()
+    client._connection = None
+    with client:
+        assert {"MOVE", "UIDPLUS"} <= client.capabilities
+
+
 def test_fetch_uses_body_peek_and_does_not_change_message_flags() -> None:
     client, connection = _client()
     fetched = client.fetch_uid(1)

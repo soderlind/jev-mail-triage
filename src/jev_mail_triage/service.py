@@ -198,6 +198,60 @@ def run_backfill(
     )
 
 
+def run_apply(
+    config: Config, store: StateStore, mailbox: MailboxSession, limit: int
+) -> CycleResult:
+    """Move stored move decisions to the review folder without new TypeSafe calls."""
+    if not 1 <= limit <= 1000:
+        raise ConfigurationError("Apply limit must be between 1 and 1000.")
+    if not config.policy.move_enabled:
+        raise ConfigurationError("apply moves mail; set move_enabled = true first.")
+    bridge = config.bridge
+    inbox = mailbox.resolve_mailbox(bridge.mailbox)
+    uid_validity, uid_next = mailbox.select(inbox, readonly=True)
+    baseline_result = store.synchronize_mailbox(bridge.account_id, inbox, uid_validity, uid_next)
+    if baseline_result != "steady":
+        return CycleResult(baseline_result, 0, 0, 0, 0)
+    mailbox.ensure_review_folder(config.policy.review_folder)
+
+    before = store.counts(bridge.account_id, inbox)
+    for item in store.moving_items(bridge.account_id, inbox, uid_validity, 20):
+        _recover_move(config, store, mailbox, item, move_enabled=True)
+    applied = 0
+    for item in store.assessed_candidates(
+        bridge.account_id,
+        inbox,
+        uid_validity,
+        config.policy.spam_threshold,
+        config.policy.scam_threshold,
+        limit,
+    ):
+        _apply_assessed(config, store, mailbox, item)
+        applied += 1
+    after = store.counts(bridge.account_id, inbox)
+    return CycleResult(
+        baseline=baseline_result,
+        discovered=0,
+        assessed=applied,
+        moved=max(0, after.get("moved", 0) - before.get("moved", 0)),
+        attention=max(0, after.get("needs_attention", 0) - before.get("needs_attention", 0)),
+    )
+
+
+def run_skip_backlog(config: Config, store: StateStore, mailbox: MailboxSession) -> int:
+    """Mark every Inbox message not yet discovered as seen; return how many were skipped."""
+    bridge = config.bridge
+    inbox = mailbox.resolve_mailbox(bridge.mailbox)
+    uid_validity, uid_next = mailbox.select(inbox, readonly=True)
+    if store.synchronize_mailbox(bridge.account_id, inbox, uid_validity, uid_next) != "steady":
+        return 0
+    cursor = store.cursor(bridge.account_id, inbox)
+    skipped = [uid for uid in mailbox.search_uids(cursor + 1) if uid > cursor]
+    if skipped:
+        store.skip_backlog(bridge.account_id, inbox, uid_validity, max(skipped))
+    return len(skipped)
+
+
 def _process_item(
     config: Config,
     store: StateStore,
