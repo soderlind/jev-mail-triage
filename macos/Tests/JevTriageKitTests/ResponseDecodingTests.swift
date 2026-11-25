@@ -96,3 +96,14 @@ func fixture(_ name: String) throws -> Data {
         #expect(fields["move_enabled"] == nil)
     }
 }
+
+@Suite struct FolderChoiceTests {
+    @Test func keepsSavedFolderMissingFromServerSelectable() {
+        #expect(folderChoices(["INBOX", "Spam"], current: "Folders/Jev Review") == ["Folders/Jev Review", "INBOX", "Spam"])
+    }
+
+    @Test func doesNotDuplicateKnownOrEmptyValues() {
+        #expect(folderChoices(["INBOX", "Spam", "INBOX"], current: "INBOX") == ["INBOX", "Spam"])
+        #expect(folderChoices(["INBOX"], current: "") == ["INBOX"])
+    }
+}

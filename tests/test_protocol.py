@@ -266,6 +266,37 @@ def test_check_bridge_uses_unsaved_overrides_without_writing(
     assert ctx.config_path.read_text() == before
 
 
+def test_bridge_folders_lists_without_selecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _configured(tmp_path)
+
+    class Bridge:
+        capabilities = frozenset({"MOVE"})
+
+        def __init__(self, _config: Any, _password: str) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def list_mailboxes(self) -> list[str]:
+            return ["Spam", "INBOX", "Folders/Jev Review"]
+
+        def select(self, *_args: object, **_kwargs: object) -> None:
+            pytest.fail("Listing folders must not select a mailbox.")
+
+    monkeypatch.setattr(runtime, "BridgeImap", Bridge)
+    response, exit_code = _call(
+        ctx, "bridge.folders", overrides={"bridge": {"mailbox": "Missing"}}, password="typed-in"
+    )
+    assert exit_code == 0
+    assert response["result"]["folders"] == ["Folders/Jev Review", "INBOX", "Spam"]
+
+
 def test_typesafe_rejection_is_reported_as_actionable_auth_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -15,6 +15,7 @@ struct SetupView: View {
     @State private var password = ""
     @State private var apiKey = ""
     @State private var bridgeCheck: BridgeCheck?
+    @State private var folders: [String]?
     @State private var typeSafeCheck: TypeSafeCheck?
     @State private var checking = false
     @State private var error: Notice?
@@ -95,7 +96,7 @@ struct SetupView: View {
                     Text("STARTTLS").tag("starttls")
                     Text("SSL/TLS").tag("implicit_tls")
                 }
-                TextField("Mailbox", text: $bridge.mailbox)
+                FolderField(title: "Mailbox", selection: $bridge.mailbox, folders: folders)
                 CertificatePicker(path: $bridge.tlsCaFile)
             }
             .formStyle(.grouped)
@@ -179,10 +180,13 @@ struct SetupView: View {
         defer { checking = false }
         do {
             bridgeCheck = try await model.checkBridge(bridge, password: password)
+            folders = bridgeCheck?.folders
             error = nil
         } catch {
             bridgeCheck = nil
             self.error = Notice("Bridge connection failed", error)
+            // A wrong mailbox fails the check but listing may still work; offer the picker.
+            if let listed = try? await model.listFolders(bridge, password: password) { folders = listed }
         }
     }
 

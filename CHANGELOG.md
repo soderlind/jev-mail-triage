@@ -15,7 +15,8 @@ All notable changes to this project are documented here. The format is based on
     is sent to TypeSafe.
   - Dashboard with running, paused, Bridge unavailable and error states.
   - Statistics, and a review list with headers fetched on demand.
-  - Settings for policy, local gate and service options.
+  - Settings for policy, local gate and service options, with Mailbox and
+    Review folder pickers filled from Bridge (`bridge.folders`, read-only).
   - An explicit confirmation before turning on automatic moves.
   - Launch at login.
 - The app bundles the engine as a PyInstaller helper, so no Python install is

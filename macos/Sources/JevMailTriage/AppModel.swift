@@ -250,6 +250,24 @@ final class AppModel {
         return try await helper.call("check.bridge", params: params, timeout: 45, as: BridgeCheck.self)
     }
 
+    /// Bridge folders for pickers; nil until loaded. Uses the saved Keychain password.
+    private(set) var folders: [String]?
+    private(set) var loadingFolders = false
+
+    func listFolders(_ bridge: BridgeSettings, password: String?) async throws -> [String] {
+        var params: [String: JSONValue] = ["overrides": ["bridge": bridge.patch]]
+        if let password, !password.isEmpty { params["password"] = .string(password) }
+        return try await helper.call("bridge.folders", params: params, timeout: 45, as: FolderList.self).folders
+    }
+
+    /// Best effort: on failure pickers fall back to free text, so errors are not surfaced.
+    func loadFolders(force: Bool = false) async {
+        guard let bridge = config?.bridge, bridgeSecretPresent, !loadingFolders, force || folders == nil else { return }
+        loadingFolders = true
+        defer { loadingFolders = false }
+        folders = try? await listFolders(bridge, password: nil)
+    }
+
     func checkTypeSafe(apiKey: String?) async throws -> TypeSafeCheck {
         var params: [String: JSONValue] = [:]
         if let apiKey, !apiKey.isEmpty { params["api_key"] = .string(apiKey) }

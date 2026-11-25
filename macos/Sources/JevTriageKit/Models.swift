@@ -145,6 +145,19 @@ public struct BridgeCheck: Decodable, Sendable, Equatable {
     public let folders: [String]
 }
 
+/// Result of `bridge.folders`.
+public struct FolderList: Decodable, Sendable, Equatable {
+    public let folders: [String]
+}
+
+/// Options for a folder picker. A saved value missing on the server stays selectable
+/// (first), so opening Settings never silently rewrites the configuration.
+public func folderChoices(_ folders: [String], current: String) -> [String] {
+    var seen = Set<String>()
+    let unique = folders.filter { seen.insert($0).inserted }
+    return current.isEmpty || seen.contains(current) ? unique : [current] + unique
+}
+
 public struct TypeSafeCheck: Decodable, Sendable, Equatable {
     public let valid: Bool
     public let model: String

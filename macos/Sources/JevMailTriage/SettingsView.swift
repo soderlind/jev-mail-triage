@@ -27,6 +27,7 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 520)
         .onAppear { draft = model.config }
+        .task { await model.loadFolders() }
         .onChange(of: model.config) { _, newValue in if draft == nil { draft = newValue } }
     }
 
@@ -70,7 +71,9 @@ struct BridgeSettingsTab: View {
                     Text("STARTTLS").tag("starttls")
                     Text("SSL/TLS").tag("implicit_tls")
                 }
-                TextField("Mailbox", text: $config.bridge.mailbox)
+                FolderField(
+                    title: "Mailbox", selection: $config.bridge.mailbox, folders: model.folders,
+                    loading: model.loadingFolders, reload: { Task { await model.loadFolders(force: true) } })
                 CertificatePicker(path: $config.bridge.tlsCaFile)
             }
             Section("Bridge password") {
@@ -121,7 +124,10 @@ struct PolicySettingsTab: View {
                 }
                 Text("Change this from the dashboard, which asks for confirmation.")
                     .font(.caption).foregroundStyle(.secondary)
-                TextField("Review folder", text: $config.policy.reviewFolder)
+                FolderField(
+                    title: "Review folder", selection: $config.policy.reviewFolder, folders: model.folders,
+                    missingNote: "created on first move",
+                    loading: model.loadingFolders, reload: { Task { await model.loadFolders(force: true) } })
             }
             Section("Thresholds") {
                 ThresholdField(title: "Spam threshold", value: $config.policy.spamThreshold)
@@ -223,6 +229,43 @@ struct ThresholdField: View {
             HStack {
                 Slider(value: $value, in: 0...1).frame(width: 180)
                 TextField("", value: $value, format: .number.precision(.fractionLength(2...3))).frame(width: 60)
+            }
+        }
+    }
+}
+
+/// A Bridge folder picker; free text until the folder list is available, or on request.
+struct FolderField: View {
+    let title: String
+    @Binding var selection: String
+    let folders: [String]?
+    var missingNote = "not on server"
+    var loading = false
+    var reload: (() -> Void)?
+    @State private var typing = false
+
+    var body: some View {
+        HStack {
+            if let folders, !folders.isEmpty, !typing {
+                Picker(title, selection: $selection) {
+                    ForEach(folderChoices(folders, current: selection), id: \.self) { folder in
+                        Text(folders.contains(folder) ? folder : "\(folder) (\(missingNote))").tag(folder)
+                    }
+                }
+            } else {
+                TextField(title, text: $selection)
+            }
+            if let folders, !folders.isEmpty {
+                Button { typing.toggle() } label: { Image(systemName: typing ? "list.bullet" : "pencil") }
+                    .buttonStyle(.borderless)
+                    .help(typing ? "Choose from Bridge folders" : "Type a folder name")
+            }
+            if loading {
+                ProgressView().controlSize(.small)
+            } else if let reload {
+                Button(action: reload) { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .help("Reload folders from Proton Mail Bridge")
             }
         }
     }

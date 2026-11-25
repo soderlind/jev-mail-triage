@@ -265,6 +265,20 @@ def _check_bridge(ctx: Context, params: dict[str, Any]) -> dict[str, Any]:
     return runtime.with_bridge(config, inspect, attempts=1, password=password)
 
 
+@command("bridge.folders")
+def _bridge_folders(ctx: Context, params: dict[str, Any]) -> dict[str, Any]:
+    """List folders for pickers. Unlike check.bridge it selects nothing, so it works
+    even when the configured mailbox is wrong."""
+    config = _config_with_overrides(ctx, params.get("overrides"))
+    password = params.get("password")
+    if password is not None and (not isinstance(password, str) or not password):
+        raise ProtocolError("Parameter 'password' must be a non-empty string.", code="bad_request")
+    folders = runtime.with_bridge(
+        config, lambda mailbox: mailbox.list_mailboxes(), attempts=1, password=password
+    )
+    return {"folders": sorted(folders)}
+
+
 @command("check.typesafe")
 def _check_typesafe(ctx: Context, params: dict[str, Any]) -> dict[str, Any]:
     """Validate the API key by listing models; no email content is sent."""
