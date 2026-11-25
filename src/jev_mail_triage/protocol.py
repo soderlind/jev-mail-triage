@@ -157,8 +157,16 @@ def _hello(_ctx: Context, _params: dict[str, Any]) -> dict[str, Any]:
         "helper_version": __version__,
         "python": platform.python_version(),
         "frozen": bool(getattr(sys, "frozen", False)),
+        "keychain_backend": _keychain_backend(),
         "commands": sorted(_HANDLERS),
     }
+
+
+def _keychain_backend() -> str:
+    """Module of the resolved keyring backend; reads no secrets."""
+    import keyring
+
+    return type(keyring.get_keyring()).__module__
 
 
 @command("config.get")

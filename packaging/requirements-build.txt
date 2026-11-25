@@ -1,0 +1,2 @@
+# Build-only tooling for the helper bundle.
+pyinstaller==6.22.3
