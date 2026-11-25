@@ -313,8 +313,22 @@ backends.
 
 **Messages stuck as failed**
 Temporary TypeSafe or Bridge errors are retried automatically with increasing
-delays. If a message still fails, run `retry --limit 20`. Moves with an unclear
-outcome are never retried automatically; check those messages by hand.
+delays. If a message still fails, use **Retry** on the app's
+**Needs attention** card, or stop `serve` and run `retry --limit 20`. Moves
+with an unclear outcome are never retried automatically; check those messages
+by hand.
+
+**`400 Bad Request` from TypeSafe in the log**
+Usually a long message: TypeSafe answers `max_tokens_exceeded` when the text is
+more than the model accepts, even within `max_input_bytes`. The message is then
+retried at once with half the text, which the log reports as
+`Message UID … is too long for the model (… bytes); retrying with … bytes.`
+A 400 followed by a 200 is therefore normal. Messages assessed from shortened
+text are never moved, and appear in the review list as
+**Long message, not moved**. If even 4 KiB is too long, the message is marked
+`input_too_large` under **Needs attention**. Lowering `max_input_bytes` (for
+example to `32768`) avoids most retries, at the cost of shortening every
+message.
 
 **`move_decision` is greater than zero, but nothing moved**
 That is expected in dry-run mode. See
@@ -339,6 +353,37 @@ python3 -m venv --clear .venv
 ```
 
 Your config, Keychain secrets, and state database are not affected.
+
+## macOS app (preview)
+
+`JevMailTriage.app` is a menu bar app that runs the same engine with its own
+bundled Python, so you don't need a Python install. It needs macOS 27 or later
+on Apple Silicon.
+
+It includes:
+
+- Guided setup with Bridge and TypeSafe connection checks.
+- Start, pause and turn-off controls, and a choice of whether triage starts,
+  stays paused or resumes its last state when the app opens.
+- Statistics with charts for outcomes, who decided (Jev or the local gate) and
+  local gate verdicts.
+- A review list you can sort by date seen, spam score or scam score, with
+  headers fetched on demand.
+- A **Needs attention** card that explains why each message failed, with a
+  **Retry** button for failed assessments. Interrupted moves are never retried
+  automatically.
+- Settings for Bridge, policy, local gate and service options. The mailbox and
+  review folder are picked from the folders Bridge lists. Changes are saved
+  together with **Save** (⌘S) or discarded with **Revert**, and the app warns
+  about unsaved changes when you quit.
+
+The background worker runs as a LaunchAgent registered with `SMAppService`.
+The app detects the CLI LaunchAgent below and migrates from it only when you
+choose to. Dry run stays the default.
+
+No signed release is published yet. Build it from source with
+`macos/scripts/build-app.sh`. See [docs/macos-app.md](docs/macos-app.md) for
+build, signing, install, migration and the manual test checklist.
 
 ## Run in the background
 
@@ -460,7 +505,9 @@ otherwise approved emails, not real inbox messages.
   loaded, and message content is never executed.
 - Attachments are never sent.
 - Input is limited: up to 2 MiB is read from Bridge and up to 64 KiB is sent to
-  TypeSafe by default (`max_input_bytes`). Truncated messages are never moved.
+  TypeSafe by default (`max_input_bytes`). If the model still finds a message too
+  long, it is retried with shorter text. Truncated or shortened messages are
+  never moved.
 - Email content is treated as untrusted data in the Jev prompt. The criteria
   separate spam from subscribed newsletters, receipts, and genuine
   correspondence. A link alone is not considered malicious. Norwegian and
@@ -503,7 +550,7 @@ otherwise approved emails, not real inbox messages.
 | `[policy]`  | `move_enabled`          | `false`                | Allow moves in `serve` and `backfill`                 |
 |             | `spam_threshold`        | `0.98` (provisional)   | Minimum spam score for review                         |
 |             | `scam_threshold`        | `0.95` (provisional)   | Minimum scam/phishing score for review                |
-|             | `max_input_bytes`       | `65536`                | Maximum text sent to TypeSafe                         |
+|             | `max_input_bytes`       | `65536`                | Maximum text sent to TypeSafe; halved automatically if the model rejects it as too long |
 |             | `review_folder`         | `Jev Review`           | Destination folder for moves; use `Folders/Jev Review` with Bridge |
 |             | `model`                 | `jev-latest`           | TypeSafe model                                        |
 |             | `allowlist`             | `[]`                   | Trusted senders; see below                            |
@@ -551,6 +598,22 @@ python -m ruff check src tests
 The tests do not connect to Proton Mail Bridge, access a real mailbox, call
 TypeSafe, move messages, or activate a LaunchAgent.
 
+The macOS app has its own Swift tests (`cd macos && swift test`). For its build
+scripts, see [docs/macos-app.md](docs/macos-app.md).
+
 ## License
 
 [MIT](LICENSE)
+
+## AI contribution attribution
+
+Parts of this project were developed with AI assistance. AI-assisted commits
+include a trailer in this format:
+
+    Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]
+
+`AGENT_NAME` is the AI tool and `MODEL_VERSION` is the specific model. The
+optional tools are specialized analysis tools; basic development tools such as
+git, compilers and editors are not listed.
+
+Example: `Assisted-by: Claude:claude-3-opus coccinelle sparse`

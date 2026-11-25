@@ -173,7 +173,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     except FileNotFoundError as exc:
         raise ConfigurationError(
             f"Configuration file not found: {path.expanduser()}. "
-            "Copy config.example.toml and edit its Bridge settings."
+            "Copy config.example.toml and edit its Bridge settings.",
+            code="not_configured",
         ) from exc
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigurationError(f"Could not read configuration file: {exc}") from exc

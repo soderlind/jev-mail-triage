@@ -562,6 +562,40 @@ class StateStore:
                 )
         return len(rows)
 
+    def attention_summary(self, account_id: str) -> list[dict[str, object]]:
+        """Why messages need attention, grouped by error code. ``retryable`` rows have no
+        move in progress, so re-queueing them cannot repeat or lose a move."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT COALESCE(last_error, 'unknown') AS reason,
+                    action_phase IS NULL AS retryable, COUNT(*) AS count
+                FROM messages WHERE account_id=? AND status='needs_attention'
+                GROUP BY 1, 2 ORDER BY count DESC, reason
+                """,
+                (account_id,),
+            ).fetchall()
+        return [
+            {"reason": row["reason"], "retryable": bool(row["retryable"]), "count": row["count"]}
+            for row in rows
+        ]
+
+    def retry_attention(self, account_id: str, limit: int) -> int:
+        """Re-queue retryable failures in every mailbox's current UIDVALIDITY only; rows from
+        an older UIDVALIDITY could point at different messages now."""
+        with self._connect() as db:
+            mailboxes = db.execute(
+                "SELECT mailbox, uid_validity FROM mailboxes WHERE account_id=?", (account_id,)
+            ).fetchall()
+        retried = 0
+        for row in mailboxes:
+            if retried >= limit:
+                break
+            retried += self.retry_failed(
+                account_id, str(row["mailbox"]), int(row["uid_validity"]), limit - retried
+            )
+        return retried
+
     def mark_superseded(self, item: MailItem, error_code: str) -> None:
         with self._connect() as db:
             db.execute(
@@ -927,4 +961,5 @@ class StateStore:
             last_error=row["last_error"],
             local_verdict=row["local_verdict"],
             local_reason=row["local_reason"],
+            seen_at=row["created_at"],
         )

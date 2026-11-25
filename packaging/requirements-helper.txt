@@ -1,0 +1,25 @@
+# Pinned runtime dependencies for the bundled macOS helper.
+# Regenerate deliberately; the build verifies every native binary supports macOS 13.
+annotated-types==0.8.0
+anyio==4.16.0
+h11==0.16.0
+httpcore2==2.16.2
+httpx2==2.16.2
+idna==3.20
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.6.0
+keyring==25.7.0
+lingua-language-detector==2.2.0
+markdown-it-py==4.3.0
+mdurl==0.1.2
+more-itertools==11.2.1
+pydantic==2.14.4
+pydantic_core==2.50.5
+Pygments==2.21.0
+rich==15.0.0
+tenacity==9.2.1
+truststore==0.10.5
+typesafe-sdk==0.7.6
+typing-inspection==0.4.5
+typing_extensions==4.16.0

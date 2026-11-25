@@ -1,3 +1,3 @@
 """Local Proton Mail triage using TypeSafe Jev."""
 
-__version__ = "1.2.0"
+__version__ = "2.0.0"

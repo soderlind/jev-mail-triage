@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .classifier import JevAssessor
 from .config import Config
-from .errors import ConfigurationError, PermanentMessageError, RetryableError, TriageError
+from .errors import (
+    ConfigurationError,
+    InputTooLargeError,
+    PermanentMessageError,
+    RetryableError,
+    TriageError,
+)
 from .gate import (
     CORRECTION_WEIGHT,
     JEV_CLEAN_MAX_SCORE,
@@ -82,9 +88,11 @@ class TrainingResult:
     correspondents: int = 0
     skipped: int = 0
     missing_folders: list[str] = field(default_factory=list)
+    interrupted: bool = False
 
 
 LAST_TRAINED_KEY = "last_trained_at"
+MIN_SHORTENED_INPUT_BYTES = 4096
 
 
 def run_cycle(
@@ -95,7 +103,10 @@ def run_cycle(
     *,
     force_dry_run: bool = False,
     gate: LocalGate | None = None,
+    stop: Callable[[], bool] | None = None,
 ) -> CycleResult:
+    """Run one triage cycle. ``stop`` is checked between messages, never mid-move."""
+    should_stop = stop or (lambda: False)
     bridge = config.bridge
     inbox = mailbox.resolve_mailbox(bridge.mailbox)
     uid_validity, uid_next = mailbox.select(inbox, readonly=True)
@@ -114,6 +125,8 @@ def run_cycle(
     moved_before = store.counts(bridge.account_id, inbox).get("moved", 0)
 
     for item in store.moving_items(bridge.account_id, inbox, uid_validity, 20):
+        if should_stop():
+            break
         _recover_move(config, store, mailbox, item, move_enabled=move_enabled)
 
     cursor = store.cursor(bridge.account_id, inbox)
@@ -123,12 +136,12 @@ def run_cycle(
     )
     processed = 0
     for item in store.due_items(bridge.account_id, inbox, uid_validity, config.service.batch_size):
-        if processed >= config.service.batch_size:
+        if processed >= config.service.batch_size or should_stop():
             break
         _process_item(config, store, mailbox, assessor, item, move_enabled=move_enabled, gate=gate)
         processed += 1
 
-    if move_enabled and processed < config.service.batch_size:
+    if move_enabled and processed < config.service.batch_size and not should_stop():
         for item in store.assessed_candidates(
             bridge.account_id,
             inbox,
@@ -137,6 +150,8 @@ def run_cycle(
             config.policy.scam_threshold,
             config.service.batch_size - processed,
         ):
+            if should_stop():
+                break
             _apply_assessed(config, store, mailbox, item)
             processed += 1
 
@@ -291,15 +306,22 @@ def _process_item(
         use_local = verdict is not None and (
             config.gate.enforced or verdict.reason == USER_RESTORED
         )
-        assessment = verdict_assessment(verdict) if use_local else assessor.assess(prepared)
-        decision = decide(prepared, assessment, config.policy)
+        # ``assessed`` may be a shortened copy; ``prepared`` keeps the message identity.
+        assessed = prepared
+        if use_local:
+            assessment = verdict_assessment(verdict)
+        else:
+            assessed, assessment = _assess_within_limit(
+                config, assessor, fetched, prepared, uid=current.uid
+            )
+        decision = decide(assessed, assessment, config.policy)
         store.record_assessment(
             current,
             message_id=prepared.message_id,
             fingerprint=prepared.fingerprint,
             assessment=assessment,
             decision=decision,
-            truncated=prepared.truncated,
+            truncated=assessed.truncated,
             local_verdict=verdict,
         )
         if gate is not None:
@@ -314,6 +336,9 @@ def _process_item(
                 _apply_assessed(config, store, mailbox, updated)
     except PermanentMessageError:
         store.mark_needs_attention(current, "malformed_message")
+    except InputTooLargeError:
+        store.mark_needs_attention(current, "input_too_large")
+        logger.warning("Message UID %s is too large for the model, even shortened.", current.uid)
     except RetryableError as exc:
         _record_retry(config, store, current, attempts, exc)
     except TriageError:
@@ -359,8 +384,15 @@ def run_training(
     mailbox: MailboxSession,
     gate: LocalGate,
     limit: int,
+    *,
+    stop: Callable[[], bool] | None = None,
 ) -> TrainingResult:
-    """Learn from the user's own folders. Read-only: folders are selected with EXAMINE."""
+    """Learn from the user's own folders. Read-only: folders are selected with EXAMINE.
+
+    ``stop`` is checked after each message, before the next is fetched. An interrupted
+    run leaves the training time unchanged, so the next run continues where it stopped.
+    """
+    should_stop = stop or (lambda: False)
     if not 1 <= limit <= 5000:
         raise ConfigurationError("Training limit must be between 1 and 5000.")
     account = config.bridge.account_id
@@ -395,6 +427,9 @@ def run_training(
                 else:
                     result.ham += 1
             store.mark_training_seen(account, folder, uid_validity, uid)
+            if should_stop():
+                result.interrupted = True
+                return result
     for folder in config.gate.sent_folders:
         if folder not in available:
             result.missing_folders.append(folder)
@@ -409,6 +444,9 @@ def run_training(
                     address_hash(address) for address in addresses
                 )
             store.mark_training_seen(account, folder, uid_validity, uid)
+            if should_stop():
+                result.interrupted = True
+                return result
     store.set_gate_meta(LAST_TRAINED_KEY, time.time())
     return result
 
@@ -460,7 +498,9 @@ def _apply_assessed(
             model_version=item.model_version or config.policy.model,
             policy_version=item.policy_version or "unknown",
         )
-        if decide(prepared, assessment, config.policy).outcome.value != "move":
+        # A score from shortened input never justifies a move.
+        checked = replace(prepared, truncated=True) if item.truncated else prepared
+        if decide(checked, assessment, config.policy).outcome.value != "move":
             store.restore_assessed(item)
             return
         _move_with_recovery(config, store, mailbox, item, prepared)
@@ -645,10 +685,38 @@ def _reconcile_missing_source(
         store.mark_needs_attention(item, "source_missing_unreconciled", ambiguous_action=True)
 
 
-def _prepare(config: Config, fetched: FetchedMessage) -> PreparedMessage:
+def _assess_within_limit(
+    config: Config,
+    assessor: JevAssessor,
+    fetched: FetchedMessage,
+    prepared: PreparedMessage,
+    *,
+    uid: int,
+) -> tuple[PreparedMessage, Assessment]:
+    """Halve the input until the model accepts it; shortened input is never moved."""
+    budget = config.policy.max_input_bytes
+    while True:
+        try:
+            return prepared, assessor.assess(prepared)
+        except InputTooLargeError:
+            budget = min(budget, prepared.input_bytes) // 2
+            if budget < MIN_SHORTENED_INPUT_BYTES:
+                raise
+            logger.info(
+                "Message UID %s is too long for the model (%d bytes); retrying with %d bytes.",
+                uid,
+                prepared.input_bytes,
+                budget,
+            )
+            prepared = _prepare(config, fetched, max_input_bytes=budget)
+
+
+def _prepare(
+    config: Config, fetched: FetchedMessage, *, max_input_bytes: int | None = None
+) -> PreparedMessage:
     return prepare_message(
         fetched.raw,
-        max_input_bytes=config.policy.max_input_bytes,
+        max_input_bytes=max_input_bytes or config.policy.max_input_bytes,
         trusted_authserv_id=config.policy.trusted_authserv_id,
         raw_truncated=fetched.truncated,
     )

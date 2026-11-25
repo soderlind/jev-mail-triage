@@ -6,6 +6,52 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-25
+
+### Added
+
+- macOS menu bar app (`macos/`, preview) with a native SwiftUI interface:
+  - Setup with read-only Bridge and TypeSafe checks, and an explanation of what
+    is sent to TypeSafe.
+  - Dashboard with running, paused, Bridge unavailable and error states.
+  - Statistics, and a review list with headers fetched on demand.
+  - Settings for policy, local gate and service options, with Mailbox and
+    Review folder pickers filled from Bridge (`bridge.folders`, read-only).
+  - An explicit confirmation before turning on automatic moves.
+  - A "Needs attention" card that explains each failure and re-queues failed
+    assessments (`attention`, `attention.retry`). Interrupted moves are never
+    retried automatically.
+  - Launch at login.
+- The app bundles the engine as a PyInstaller helper, so no Python install is
+  needed. It requires macOS 27 or later on Apple Silicon.
+- Background worker as an `SMAppService` LaunchAgent. It uses the existing
+  single-worker database lock, honours pause, resume and reload through a
+  control file, and publishes a status heartbeat.
+- Explicit migration from the CLI LaunchAgent. It stops and renames the old
+  agent, and has the helper re-save the Keychain items so it owns them.
+- Versioned JSON protocol (`jev-mail-triage rpc`) with structured errors and
+  distinct exit codes, plus the `worker` command.
+- Build, inside-out signing, DMG and notarization scripts (`packaging/`,
+  `macos/scripts/`).
+
+The CLI and its `serve` LaunchAgent keep working as before.
+
+### Fixed
+
+- Long messages that exceed the model's token limit (`max_tokens_exceeded`) are
+  now assessed with progressively shortened input instead of failing five times
+  and needing attention. Shortened assessments are never moved; messages that
+  still do not fit are reported as `input_too_large`.
+- Check Key in setup works before any configuration is saved.
+- The worker releases its lock while backing off after a failure, so CLI
+  commands are not blocked, and pausing interrupts move recovery and gate
+  training promptly; interrupted training resumes on the next run.
+- Settings and worker control files are updated under a file lock, so the app
+  and worker cannot overwrite each other's changes.
+- The setup wizard stays open if saving a secret to the Keychain fails.
+- Pause and Quit only quits once triage is paused.
+- Pressing Return in list fields (allowlist, languages, training folders) starts a new line.
+
 ## [1.2.0] - 2026-11-25
 
 ### Added
@@ -91,7 +137,8 @@ All notable changes to this project are documented here. The format is based on
 - Baseline handling, UIDVALIDITY recovery, retries with backoff, and
   crash-safe move recovery.
 
-[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/1.2.0...HEAD
+[Unreleased]: https://github.com/soderlind/jev-mail-triage/compare/2.0.0...HEAD
+[2.0.0]: https://github.com/soderlind/jev-mail-triage/compare/1.2.0...2.0.0
 [1.2.0]: https://github.com/soderlind/jev-mail-triage/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/soderlind/jev-mail-triage/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/soderlind/jev-mail-triage/releases/tag/1.0.0

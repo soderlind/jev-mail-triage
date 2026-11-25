@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from typesafe_sdk import Noul, NoulCriteria, TypeSafeError
+from typesafe_sdk import Noul, NoulCriteria, TypeSafeAPIError, TypeSafeError
 
-from .errors import RetryableError
+from .errors import InputTooLargeError, RetryableError
 from .models import Assessment, PreparedMessage
 
 POLICY_VERSION = "email-v1"
@@ -70,6 +70,10 @@ class JevAssessor:
                     ),
                 },
             )
+        except TypeSafeAPIError as exc:
+            if _error_type(exc) == "max_tokens_exceeded":
+                raise InputTooLargeError("Message is longer than the model accepts.") from exc
+            raise RetryableError(f"TypeSafe request failed ({exc.status}).") from exc
         except TypeSafeError as exc:
             raise RetryableError("TypeSafe request failed.") from exc
 
@@ -94,3 +98,10 @@ class JevAssessor:
             and not isinstance(value, bool)
             and 0.0 <= float(value) <= 1.0
         )
+
+
+def _error_type(exc: TypeSafeAPIError) -> str | None:
+    body = exc.body
+    detail = body.get("detail") if isinstance(body, dict) else None
+    value = detail.get("error_type") if isinstance(detail, dict) else None
+    return value if isinstance(value, str) else None
