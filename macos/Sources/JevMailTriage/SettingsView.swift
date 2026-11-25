@@ -76,9 +76,9 @@ struct BridgeSettingsTab: View {
         @Bindable var model = model
         Form {
             Section {
-                TextField("Username", text: $config.bridge.username)
-                TextField("Host", text: $config.bridge.host)
-                TextField("IMAP port", value: $config.bridge.port, format: .number.grouping(.never))
+                TextField("Username", text: $config.bridge.username).multilineTextAlignment(.leading)
+                TextField("Host", text: $config.bridge.host).multilineTextAlignment(.leading)
+                TextField("IMAP port", value: $config.bridge.port, format: .number.grouping(.never)).multilineTextAlignment(.leading)
                 Picker("Security", selection: $config.bridge.securityMode) {
                     Text("STARTTLS").tag("starttls")
                     Text("SSL/TLS").tag("implicit_tls")
@@ -90,6 +90,7 @@ struct BridgeSettingsTab: View {
                 SecureField(
                     "Bridge password", text: $model.pendingBridgePassword,
                     prompt: Text(model.bridgeSecretPresent ? "Saved in Keychain — type to replace" : "From Bridge, not your Proton password"))
+                    .multilineTextAlignment(.leading)
             }
             Section {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -155,8 +156,8 @@ struct PolicySettingsTab: View {
             Section("Thresholds") {
                 ThresholdField(title: "Spam threshold", value: $config.policy.spamThreshold)
                 ThresholdField(title: "Scam threshold", value: $config.policy.scamThreshold)
-                TextField("Max input bytes", value: $config.policy.maxInputBytes, format: .number.grouping(.never))
-                TextField("Model", text: $config.policy.model)
+                TextField("Max input bytes", value: $config.policy.maxInputBytes, format: .number.grouping(.never)).multilineTextAlignment(.leading)
+                TextField("Model", text: $config.policy.model).multilineTextAlignment(.leading)
             }
             Section("Allowlist") {
                 OptionalTextField(title: "Trusted authserv-id", text: $config.policy.trustedAuthservId)
@@ -168,6 +169,7 @@ struct PolicySettingsTab: View {
                 SecureField(
                     "API key", text: $model.pendingAPIKey,
                     prompt: Text(model.typeSafeSecretPresent ? "Saved in Keychain — type to replace" : "sk-…"))
+                    .multilineTextAlignment(.leading)
             }
         }
         .formStyle(.grouped)
@@ -197,8 +199,8 @@ struct GateSettingsTab: View {
                 ListEditor(title: "Spam", items: $config.gate.spamFolders)
                 ListEditor(title: "Ham", items: $config.gate.hamFolders)
                 ListEditor(title: "Sent", items: $config.gate.sentFolders)
-                TextField("Minimum examples", value: $config.gate.minExamples, format: .number)
-                TextField("Retrain every (seconds)", value: $config.gate.trainIntervalSeconds, format: .number.grouping(.never))
+                TextField("Minimum examples", value: $config.gate.minExamples, format: .number).multilineTextAlignment(.leading)
+                TextField("Retrain every (seconds)", value: $config.gate.trainIntervalSeconds, format: .number.grouping(.never)).multilineTextAlignment(.leading)
             }
             Section("Thresholds") {
                 ThresholdField(title: "Bayes spam", value: $config.gate.bayesSpamThreshold)
@@ -215,10 +217,10 @@ struct ServiceSettingsTab: View {
 
     var body: some View {
         Form {
-            TextField("Check every (seconds)", value: $config.service.pollIntervalSeconds, format: .number.grouping(.never))
-            TextField("Batch size", value: $config.service.batchSize, format: .number)
-            TextField("Max attempts per message", value: $config.service.maxAttempts, format: .number)
-            TextField("Max retry backoff (seconds)", value: $config.service.backoffMaxSeconds, format: .number.grouping(.never))
+            TextField("Check every (seconds)", value: $config.service.pollIntervalSeconds, format: .number.grouping(.never)).multilineTextAlignment(.leading)
+            TextField("Batch size", value: $config.service.batchSize, format: .number).multilineTextAlignment(.leading)
+            TextField("Max attempts per message", value: $config.service.maxAttempts, format: .number).multilineTextAlignment(.leading)
+            TextField("Max retry backoff (seconds)", value: $config.service.backoffMaxSeconds, format: .number.grouping(.never)).multilineTextAlignment(.leading)
             Text("Database: \(config.databasePath)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         }
         .formStyle(.grouped)
@@ -295,7 +297,7 @@ struct FolderField: View {
                     }
                 }
             } else {
-                TextField(title, text: $selection)
+                TextField(title, text: $selection).multilineTextAlignment(.leading)
             }
             if let folders, !folders.isEmpty {
                 Button { typing.toggle() } label: { Image(systemName: typing ? "list.bullet" : "pencil") }
@@ -318,7 +320,7 @@ struct OptionalTextField: View {
     @Binding var text: String?
 
     var body: some View {
-        TextField(title, text: Binding(get: { text ?? "" }, set: { text = $0.isEmpty ? nil : $0 }))
+        TextField(title, text: Binding(get: { text ?? "" }, set: { text = $0.isEmpty ? nil : $0 })).multilineTextAlignment(.leading)
     }
 }
 
@@ -347,9 +349,10 @@ struct ListEditor: View {
 }
 
 extension View {
-    /// Grouped forms render plain text fields as borderless right-aligned text, which reads
-    /// as a static value. Bordered, leading-aligned fields look editable.
+    /// Grouped forms render plain text fields borderless, which reads as a static value;
+    /// bordered fields look editable. Leading alignment has to be set on each field, because
+    /// the form overrides an alignment set further out.
     func editableFieldStyle() -> some View {
-        textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
+        textFieldStyle(.roundedBorder)
     }
 }
