@@ -215,6 +215,9 @@ When moves are enabled:
 
 - Only high-scoring messages are moved, into a `Jev Review` folder (configurable
   with `review_folder`). Apple Mail shows it under your Proton account.
+  Bridge only allows new folders under `Folders/`, so set
+  `review_folder = "Folders/Jev Review"` (as in `config.example.toml`); the
+  folder is created on the first run.
 - Uncertain and clean messages stay where they are.
 - Messages whose content was too large to send in full are never moved.
 - **Nothing is ever deleted.** Check `Jev Review` and move any mistakes back.
@@ -314,6 +317,22 @@ outcome are never retried automatically; check those messages by hand.
 **`move_decision` is greater than zero, but nothing moved**
 That is expected in dry-run mode. See
 [Turning on automatic moves](#turning-on-automatic-moves).
+
+**"Could not create review folder 'Jev Review'"**
+Bridge rejects new top-level folders. Set
+`review_folder = "Folders/Jev Review"` in the `[policy]` section and restart
+`serve`. Apple Mail still shows the folder as `Jev Review`.
+
+**`bad interpreter: No such file or directory` when running `.venv/bin/jev-mail-triage`**
+A Python upgrade (for example by Homebrew) removed the interpreter the virtual
+environment was built with. Rebuild it from the project folder:
+
+```sh
+python3 -m venv --clear .venv
+.venv/bin/python -m pip install -e '.[dev]'
+```
+
+Your config, Keychain secrets, and state database are not affected.
 
 ## Run in the background
 
@@ -479,7 +498,7 @@ otherwise approved emails, not real inbox messages.
 |             | `spam_threshold`        | `0.98` (provisional)   | Minimum spam score for review                         |
 |             | `scam_threshold`        | `0.95` (provisional)   | Minimum scam/phishing score for review                |
 |             | `max_input_bytes`       | `65536`                | Maximum text sent to TypeSafe                         |
-|             | `review_folder`         | `Jev Review`           | Destination folder for moves                          |
+|             | `review_folder`         | `Jev Review`           | Destination folder for moves; use `Folders/Jev Review` with Bridge |
 |             | `model`                 | `jev-latest`           | TypeSafe model                                        |
 |             | `allowlist`             | `[]`                   | Trusted senders; see below                            |
 |             | `trusted_authserv_id`   | *(unset)*              | Required for the allowlist                            |

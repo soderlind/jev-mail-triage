@@ -21,7 +21,7 @@ move_enabled = false
 spam_threshold = 0.98 # Provisional; calibrate with labeled fixtures.
 scam_threshold = 0.95 # Provisional; calibrate with labeled fixtures.
 max_input_bytes = 65536
-review_folder = "Jev Review"
+review_folder = "Folders/Jev Review" # Bridge only allows new folders under Folders/.
 model = "jev-latest"
 # Set only to a receiver Authentication-Results authserv-id you trust.
 # trusted_authserv_id = "replace-with-trusted-receiver-id"

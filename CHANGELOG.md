@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- `config.example.toml` now sets `review_folder = "Folders/Jev Review"`, because
+  Proton Mail Bridge only allows new folders under `Folders/`. The README
+  explains this and how to rebuild `.venv` after a Python upgrade.
 - `stats`, `status`, `candidates`, `train`, and `evaluate` now print tables
   using [Rich](https://github.com/Textualize/rich), with colour in a terminal.
   Scores at or above a threshold are highlighted. `candidates` without `--json`
