@@ -8,7 +8,18 @@ struct SetupView: View {
     @Environment(AppModel.self) private var model
     var onFinish: () -> Void = {}
 
-    enum Step: Int { case privacy, bridge, typeSafe, finish }
+    enum Step: Int {
+        case privacy, bridge, typeSafe, finish
+
+        var title: String {
+            switch self {
+            case .privacy: return "Privacy"
+            case .bridge: return "Proton Mail Bridge"
+            case .typeSafe: return "TypeSafe"
+            case .finish: return "Finish"
+            }
+        }
+    }
 
     @State private var step: Step = .privacy
     @State private var bridge = BridgeSettings()
@@ -25,8 +36,10 @@ struct SetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Set Up Jev Mail Triage").font(.largeTitle.bold())
-                ProgressView(value: Double(step.rawValue), total: 3).frame(maxWidth: 360)
-                if let error { NoticeView(notice: error) { self.error = nil } }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Step \(step.rawValue + 1) of 4 · \(step.title)").font(.callout).foregroundStyle(.secondary)
+                    ProgressView(value: Double(step.rawValue + 1), total: 4).frame(maxWidth: 360)
+                }
                 switch step {
                 case .privacy: privacy
                 case .bridge: bridgeForm
@@ -86,34 +99,38 @@ struct SetupView: View {
             Text("Open Proton Mail Bridge, choose your account, and copy the IMAP details from Mailbox details.")
                 .foregroundStyle(.secondary)
             Form {
-                TextField("Username", text: $bridge.username, prompt: Text("you@proton.me"))
+                TextField("Username", text: $bridge.username, prompt: Text("you@proton.me")).multilineTextAlignment(.leading)
                 SecureField(
                     "Bridge password", text: $password,
                     prompt: Text(model.bridgeSecretPresent ? "Saved in Keychain — leave empty to keep" : "From Bridge, not your Proton password"))
-                TextField("Host", text: $bridge.host)
-                TextField("IMAP port", value: $bridge.port, format: .number.grouping(.never))
+                    .multilineTextAlignment(.leading)
+                TextField("Host", text: $bridge.host).multilineTextAlignment(.leading)
+                TextField("IMAP port", value: $bridge.port, format: .number.grouping(.never)).multilineTextAlignment(.leading)
                 Picker("Security", selection: $bridge.securityMode) {
                     Text("STARTTLS").tag("starttls")
                     Text("SSL/TLS").tag("implicit_tls")
                 }
                 FolderField(title: "Mailbox", selection: $bridge.mailbox, folders: folders)
                 CertificatePicker(path: $bridge.tlsCaFile)
+                Section {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Button("Test Connection") { Task { await testBridge() } }
+                            .disabled(checking || bridge.username.isEmpty || (password.isEmpty && !model.bridgeSecretPresent))
+                        if checking {
+                            ProgressView().controlSize(.small)
+                        } else if let check = bridgeCheck {
+                            BridgeCheckSummary(check: check)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    errorView
+                }
             }
             .formStyle(.grouped)
             .editableFieldStyle()
             .onChange(of: bridge) { bridgeCheck = nil }
             .onChange(of: password) { bridgeCheck = nil }
-            if let check = bridgeCheck { BridgeCheckSummary(check: check) }
-            HStack {
-                Button("Back") { step = .privacy }
-                Spacer()
-                if checking { ProgressView().controlSize(.small) }
-                Button("Test Connection") { Task { await testBridge() } }
-                    .disabled(checking || bridge.username.isEmpty || (password.isEmpty && !model.bridgeSecretPresent))
-                Button("Continue") { step = .typeSafe }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(bridgeCheck == nil)
-            }
+            stepButtons(back: .privacy, next: .typeSafe, ready: bridgeCheck != nil, hint: "Test the connection to continue.")
         }
     }
 
@@ -126,29 +143,29 @@ struct SetupView: View {
                 SecureField(
                     "API key", text: $apiKey,
                     prompt: Text(model.typeSafeSecretPresent ? "Saved in Keychain — leave empty to keep" : "sk-…"))
+                    .multilineTextAlignment(.leading)
+                Section {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Button("Check Key") { Task { await testTypeSafe() } }
+                            .disabled(checking || (apiKey.isEmpty && !model.typeSafeSecretPresent))
+                        if checking {
+                            ProgressView().controlSize(.small)
+                        } else if let check = typeSafeCheck {
+                            CheckResult(
+                                ok: check.modelAvailable,
+                                text: check.modelAvailable
+                                    ? "Key accepted. Model \(check.model) is available."
+                                    : "Key accepted, but model \(check.model) is not listed. Choose another model in Settings.")
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    errorView
+                }
             }
             .formStyle(.grouped)
             .editableFieldStyle()
             .onChange(of: apiKey) { typeSafeCheck = nil }
-            if let check = typeSafeCheck {
-                Label(
-                    check.modelAvailable
-                        ? "Key accepted. Model \(check.model) is available."
-                        : "Key accepted, but model \(check.model) is not listed. Choose another model in Settings.",
-                    systemImage: check.modelAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                )
-                .foregroundStyle(check.modelAvailable ? .green : .orange)
-            }
-            HStack {
-                Button("Back") { step = .bridge }
-                Spacer()
-                if checking { ProgressView().controlSize(.small) }
-                Button("Check Key") { Task { await testTypeSafe() } }
-                    .disabled(checking || (apiKey.isEmpty && !model.typeSafeSecretPresent))
-                Button("Continue") { step = .finish }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(typeSafeCheck == nil)
-            }
+            stepButtons(back: .bridge, next: .finish, ready: typeSafeCheck != nil, hint: "Check the key to continue.")
         }
     }
 
@@ -162,6 +179,7 @@ struct SetupView: View {
                 Label("A legacy LaunchAgent is installed. Migrate it from the dashboard before starting.", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
+            errorView
             HStack {
                 Button("Back") { step = .typeSafe }
                 Spacer()
@@ -170,6 +188,21 @@ struct SetupView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(checking)
             }
+        }
+    }
+
+    @ViewBuilder private var errorView: some View {
+        if let error { NoticeView(notice: error) { self.error = nil } }
+    }
+
+    private func stepButtons(back: Step, next: Step, ready: Bool, hint: String) -> some View {
+        HStack {
+            Button("Back") { step = back; error = nil }
+            Spacer()
+            if !ready { Text(hint).font(.caption).foregroundStyle(.secondary) }
+            Button("Continue") { step = next; error = nil }
+                .buttonStyle(.borderedProminent)
+                .disabled(!ready)
         }
     }
 
@@ -217,20 +250,30 @@ struct SetupView: View {
     }
 }
 
+/// A check's outcome: coloured icon, primary-coloured text so it stays readable.
+struct CheckResult: View {
+    let ok: Bool
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(ok ? Color.green : Color.orange)
+        }
+    }
+}
+
 struct BridgeCheckSummary: View {
     let check: BridgeCheck
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label {
-                Text("Connected. \(check.mailbox) is reachable.")
-                    .help("The test opens the mailbox in read-only mode, so it never marks, flags or moves mail.")
-            } icon: {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-            }
+            CheckResult(ok: true, text: "Connected. \(check.mailbox) is reachable.")
+                .help("The test opens the mailbox in read-only mode, so it never marks, flags or moves mail.")
             if !check.supportsMove {
-                Label("Bridge does not advertise MOVE; moves will not be possible.", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                CheckResult(ok: false, text: "Bridge does not advertise MOVE; moves will not be possible.")
             }
             if !check.reviewFolderExists {
                 Text("Review folder “\(check.reviewFolder)” does not exist yet; it is created on the first move.")
