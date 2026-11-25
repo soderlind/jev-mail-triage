@@ -42,6 +42,15 @@ The CLI and its `serve` LaunchAgent keep working as before.
   now assessed with progressively shortened input instead of failing five times
   and needing attention. Shortened assessments are never moved; messages that
   still do not fit are reported as `input_too_large`.
+- Check Key in setup works before any configuration is saved.
+- The worker releases its lock while backing off after a failure, so CLI
+  commands are not blocked, and pausing interrupts move recovery and gate
+  training promptly; interrupted training resumes on the next run.
+- Settings and worker control files are updated under a file lock, so the app
+  and worker cannot overwrite each other's changes.
+- The setup wizard stays open if saving a secret to the Keychain fails.
+- Pause and Quit only quits once triage is paused.
+- Pressing Return in list fields (allowlist, languages, training folders) starts a new line.
 
 ## [1.2.0] - 2026-11-25
 
