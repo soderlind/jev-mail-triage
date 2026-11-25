@@ -15,8 +15,8 @@ All notable changes to this project are documented here. The format is based on
   decided, and local gate verdicts by reason. Supports `--days N` and `--json`.
 - `apply --limit N` moves stored move decisions to the review folder without
   new TypeSafe calls. Requires `move_enabled = true`.
-- `skip-backlog` marks Inbox mail that has not been assessed yet as seen, so
-  only new arrivals are sent to TypeSafe.
+- `skip-backlog` marks Inbox mail that has not been assessed yet as seen
+  (including mail already queued), so only new arrivals are sent to TypeSafe.
 
 ### Fixed
 

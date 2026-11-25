@@ -215,17 +215,24 @@ def run_apply(
     mailbox.ensure_review_folder(config.policy.review_folder)
 
     before = store.counts(bridge.account_id, inbox)
-    for item in store.moving_items(bridge.account_id, inbox, uid_validity, 20):
+    recovering = store.moving_items(bridge.account_id, inbox, uid_validity, min(20, limit))
+    for item in recovering:
         _recover_move(config, store, mailbox, item, move_enabled=True)
     applied = 0
-    for item in store.assessed_candidates(
-        bridge.account_id,
-        inbox,
-        uid_validity,
-        config.policy.spam_threshold,
-        config.policy.scam_threshold,
-        limit,
-    ):
+    remaining = limit - len(recovering)
+    candidates = (
+        store.assessed_candidates(
+            bridge.account_id,
+            inbox,
+            uid_validity,
+            config.policy.spam_threshold,
+            config.policy.scam_threshold,
+            remaining,
+        )
+        if remaining > 0
+        else []
+    )
+    for item in candidates:
         _apply_assessed(config, store, mailbox, item)
         applied += 1
     after = store.counts(bridge.account_id, inbox)
@@ -247,9 +254,10 @@ def run_skip_backlog(config: Config, store: StateStore, mailbox: MailboxSession)
         return 0
     cursor = store.cursor(bridge.account_id, inbox)
     skipped = [uid for uid in mailbox.search_uids(cursor + 1) if uid > cursor]
-    if skipped:
-        store.skip_backlog(bridge.account_id, inbox, uid_validity, max(skipped))
-    return len(skipped)
+    retired = store.skip_backlog(
+        bridge.account_id, inbox, uid_validity, max(skipped, default=cursor)
+    )
+    return len(skipped) + retired
 
 
 def _process_item(
@@ -433,6 +441,11 @@ def _apply_assessed(
         return
     attempts = store.start_attempt(item)
     try:
+        # Earlier moves or recoveries may have left another folder selected.
+        source_validity, _ = mailbox.select(item.mailbox, readonly=True)
+        if source_validity != item.uid_validity:
+            store.mark_needs_attention(item, "uidvalidity_changed_before_recheck")
+            return
         fetched = mailbox.fetch_uid(item.uid)
         if fetched is None:
             _reconcile_missing_source(config, store, mailbox, item)
