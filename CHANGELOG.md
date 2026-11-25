@@ -36,6 +36,13 @@ All notable changes to this project are documented here. The format is based on
 
 The CLI and its `serve` LaunchAgent keep working as before.
 
+### Fixed
+
+- Long messages that exceed the model's token limit (`max_tokens_exceeded`) are
+  now assessed with progressively shortened input instead of failing five times
+  and needing attention. Shortened assessments are never moved; messages that
+  still do not fit are reported as `input_too_large`.
+
 ## [1.2.0] - 2026-11-25
 
 ### Added

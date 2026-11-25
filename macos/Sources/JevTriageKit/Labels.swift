@@ -16,7 +16,7 @@ public enum MailLabels {
         case "scam_threshold": return "Scam score"
         case "below_threshold": return "Below thresholds"
         case "authenticated_allowlist": return "Allowlisted sender"
-        case "truncated_input": return "Too large to assess"
+        case "truncated_input": return "Long message, not moved"
         case "local_bayes_spam": return "Local gate: learned spam"
         case "local_bayes_clean": return "Local gate: learned clean"
         case "near_duplicate_junk": return "Local gate: like known spam"
@@ -71,6 +71,8 @@ public struct AttentionReason: Decodable, Sendable, Equatable, Identifiable {
             return "The message disappeared from the Inbox before triage finished."
         case "malformed_message", "malformed_message_during_recheck":
             return "The message could not be read as valid email."
+        case "input_too_large":
+            return "The message is too long for the model to assess, even shortened. It stays in the Inbox."
         case "message_processing_error":
             return "An unexpected error occurred while reading the message."
         case "uidvalidity_changed", "uidvalidity_changed_before_recheck", "uidvalidity_changed_before_move":

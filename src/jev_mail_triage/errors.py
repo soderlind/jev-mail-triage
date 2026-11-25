@@ -20,3 +20,7 @@ class RetryableError(TriageError):
 
 class PermanentMessageError(TriageError):
     pass
+
+
+class InputTooLargeError(TriageError):
+    """The model rejected the prompt as longer than its token limit."""

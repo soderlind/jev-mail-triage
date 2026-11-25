@@ -3,12 +3,18 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from .classifier import JevAssessor
 from .config import Config
-from .errors import ConfigurationError, PermanentMessageError, RetryableError, TriageError
+from .errors import (
+    ConfigurationError,
+    InputTooLargeError,
+    PermanentMessageError,
+    RetryableError,
+    TriageError,
+)
 from .gate import (
     CORRECTION_WEIGHT,
     JEV_CLEAN_MAX_SCORE,
@@ -85,6 +91,7 @@ class TrainingResult:
 
 
 LAST_TRAINED_KEY = "last_trained_at"
+MIN_SHORTENED_INPUT_BYTES = 4096
 
 
 def run_cycle(
@@ -296,15 +303,20 @@ def _process_item(
         use_local = verdict is not None and (
             config.gate.enforced or verdict.reason == USER_RESTORED
         )
-        assessment = verdict_assessment(verdict) if use_local else assessor.assess(prepared)
-        decision = decide(prepared, assessment, config.policy)
+        # ``assessed`` may be a shortened copy; ``prepared`` keeps the message identity.
+        assessed = prepared
+        if use_local:
+            assessment = verdict_assessment(verdict)
+        else:
+            assessed, assessment = _assess_within_limit(config, assessor, fetched, prepared)
+        decision = decide(assessed, assessment, config.policy)
         store.record_assessment(
             current,
             message_id=prepared.message_id,
             fingerprint=prepared.fingerprint,
             assessment=assessment,
             decision=decision,
-            truncated=prepared.truncated,
+            truncated=assessed.truncated,
             local_verdict=verdict,
         )
         if gate is not None:
@@ -319,6 +331,9 @@ def _process_item(
                 _apply_assessed(config, store, mailbox, updated)
     except PermanentMessageError:
         store.mark_needs_attention(current, "malformed_message")
+    except InputTooLargeError:
+        store.mark_needs_attention(current, "input_too_large")
+        logger.warning("Message UID %s is too large for the model, even shortened.", current.uid)
     except RetryableError as exc:
         _record_retry(config, store, current, attempts, exc)
     except TriageError:
@@ -465,7 +480,9 @@ def _apply_assessed(
             model_version=item.model_version or config.policy.model,
             policy_version=item.policy_version or "unknown",
         )
-        if decide(prepared, assessment, config.policy).outcome.value != "move":
+        # A score from shortened input never justifies a move.
+        checked = replace(prepared, truncated=True) if item.truncated else prepared
+        if decide(checked, assessment, config.policy).outcome.value != "move":
             store.restore_assessed(item)
             return
         _move_with_recovery(config, store, mailbox, item, prepared)
@@ -650,10 +667,27 @@ def _reconcile_missing_source(
         store.mark_needs_attention(item, "source_missing_unreconciled", ambiguous_action=True)
 
 
-def _prepare(config: Config, fetched: FetchedMessage) -> PreparedMessage:
+def _assess_within_limit(
+    config: Config, assessor: JevAssessor, fetched: FetchedMessage, prepared: PreparedMessage
+) -> tuple[PreparedMessage, Assessment]:
+    """Halve the input until the model accepts it; shortened input is never moved."""
+    budget = config.policy.max_input_bytes
+    while True:
+        try:
+            return prepared, assessor.assess(prepared)
+        except InputTooLargeError:
+            budget = min(budget, prepared.input_bytes) // 2
+            if budget < MIN_SHORTENED_INPUT_BYTES:
+                raise
+            prepared = _prepare(config, fetched, max_input_bytes=budget)
+
+
+def _prepare(
+    config: Config, fetched: FetchedMessage, *, max_input_bytes: int | None = None
+) -> PreparedMessage:
     return prepare_message(
         fetched.raw,
-        max_input_bytes=config.policy.max_input_bytes,
+        max_input_bytes=max_input_bytes or config.policy.max_input_bytes,
         trusted_authserv_id=config.policy.trusted_authserv_id,
         raw_truncated=fetched.truncated,
     )

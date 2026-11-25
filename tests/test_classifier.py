@@ -1,10 +1,11 @@
 from pathlib import Path
 
+import httpx2
 import pytest
-from typesafe_sdk import TypeSafeAPIConnectionError
+from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeBadRequestError
 
 from jev_mail_triage.classifier import JevAssessor
-from jev_mail_triage.errors import RetryableError
+from jev_mail_triage.errors import InputTooLargeError, RetryableError
 from jev_mail_triage.message import prepare_message
 
 
@@ -76,3 +77,19 @@ def test_typesafe_transport_failures_are_retryable() -> None:
     prepared = prepare_message(b"From: a@example.test\r\n\r\nbody", max_input_bytes=4096)
     with pytest.raises(RetryableError):
         JevAssessor(_FailingClient(), model="jev-latest").assess(prepared)
+
+
+class _RejectingClient:
+    def __init__(self, error_type: str) -> None:
+        self.body = {"detail": {"error_type": error_type}}
+
+    def system_one(self, **kwargs: object) -> object:
+        raise TypeSafeBadRequestError(400, self.body, httpx2.Headers())
+
+
+def test_token_limit_rejection_is_reported_as_input_too_large() -> None:
+    prepared = prepare_message(b"From: a@example.test\r\n\r\nbody", max_input_bytes=4096)
+    with pytest.raises(InputTooLargeError):
+        JevAssessor(_RejectingClient("max_tokens_exceeded"), model="jev-latest").assess(prepared)
+    with pytest.raises(RetryableError):
+        JevAssessor(_RejectingClient("other"), model="jev-latest").assess(prepared)

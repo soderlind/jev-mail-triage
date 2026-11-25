@@ -4,11 +4,11 @@ from pathlib import Path
 import pytest
 
 from jev_mail_triage.config import BridgeConfig, Config, GateConfig, PolicyConfig, ServiceConfig
-from jev_mail_triage.errors import ConfigurationError
+from jev_mail_triage.errors import ConfigurationError, InputTooLargeError
 from jev_mail_triage.gate import LocalGate
 from jev_mail_triage.imap_client import FetchedMessage
 from jev_mail_triage.message import prepare_message
-from jev_mail_triage.models import Assessment, Decision, Outcome
+from jev_mail_triage.models import Assessment, Decision, Outcome, PreparedMessage
 from jev_mail_triage.service import (
     run_apply,
     run_cycle,
@@ -388,6 +388,54 @@ def test_one_malformed_message_does_not_block_later_queue_items(tmp_path: Path) 
     assert result.assessed == 2
     assert store.get_item("test", "INBOX", 77, 1).status == "needs_attention"
     assert store.get_item("test", "INBOX", 77, 2).status == "assessed"
+
+
+class _TokenLimitedAssessor:
+    """Rejects prompts above ``limit`` bytes, like a model with a token limit."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.sizes: list[int] = []
+
+    def assess(self, prepared: PreparedMessage) -> Assessment:
+        self.sizes.append(prepared.input_bytes)
+        if prepared.input_bytes > self.limit:
+            raise InputTooLargeError("too long")
+        return Assessment(0.99, 0.1, "jev-latest", "email-v1")
+
+
+def _large_message_setup(tmp_path: Path) -> tuple[Config, StateStore, _FakeMailbox]:
+    config = _config(tmp_path / "state.sqlite3", moves=True)
+    config = replace(config, policy=replace(config.policy, max_input_bytes=65536))
+    store = StateStore(config.database_path)
+    mailbox = _FakeMailbox(frozenset({"MOVE"}))
+    run_cycle(config, store, mailbox, _FakeAssessor())
+    mailbox.boxes["INBOX"][1] = (MESSAGE + b" filler" * 5000, False)
+    return config, store, mailbox
+
+
+def test_oversized_message_is_shortened_until_accepted_and_left_in_inbox(
+    tmp_path: Path,
+) -> None:
+    config, store, mailbox = _large_message_setup(tmp_path)
+    assessor = _TokenLimitedAssessor(limit=10000)
+    result = run_cycle(config, store, mailbox, assessor)
+    item = store.get_item("test", "INBOX", 77, 1)
+    assert result.assessed == 1 and result.moved == 0
+    assert assessor.sizes[0] > 30000 and assessor.sizes[-1] <= 10000
+    assert item.status == "assessed" and item.truncated
+    assert item.decision_reason == "truncated_input"
+    assert 1 in mailbox.boxes["INBOX"]
+
+
+def test_message_too_large_even_shortened_needs_attention_without_retries(
+    tmp_path: Path,
+) -> None:
+    config, store, mailbox = _large_message_setup(tmp_path)
+    run_cycle(config, store, mailbox, _TokenLimitedAssessor(limit=100))
+    item = store.get_item("test", "INBOX", 77, 1)
+    assert item.status == "needs_attention"
+    assert item.last_error == "input_too_large"
 
 
 GERMAN_SPAM = (
