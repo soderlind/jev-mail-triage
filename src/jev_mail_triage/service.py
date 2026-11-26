@@ -21,6 +21,7 @@ from .gate import (
     USER_RESTORED,
     LocalGate,
     address_hash,
+    replaces_jev,
     verdict_assessment,
 )
 from .imap_client import FetchedMessage
@@ -303,9 +304,7 @@ def _process_item(
             return
         prepared = _prepare(config, fetched)
         verdict = _local_verdict(store, gate, current, prepared)
-        use_local = verdict is not None and (
-            config.gate.enforced or verdict.reason == USER_RESTORED
-        )
+        use_local = replaces_jev(verdict, config.gate)
         # ``assessed`` may be a shortened copy; ``prepared`` keeps the message identity.
         assessed = prepared
         if use_local:

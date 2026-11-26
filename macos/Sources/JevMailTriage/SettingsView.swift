@@ -190,7 +190,7 @@ struct GateSettingsTab: View {
                 Picker("Mode", selection: $config.gate.mode) {
                     Text("Off").tag("off")
                     Text("Shadow (record only)").tag("shadow")
-                    Text("Enforce (skip Jev when confident)").tag("enforce")
+                    Text("Enforce (local spam skips Jev)").tag("enforce")
                 }
                 ListEditor(title: "Allowed languages (ISO 639-1; empty = all)", items: $config.gate.allowedLanguages)
                 Toggle("Learn from Jev decisions", isOn: $config.gate.learnFromJev)

@@ -313,9 +313,10 @@ struct StatisticsView: View {
         .task(id: days) { await load() }
     }
 
-    /// Explains why the local gate decides nothing unless it is enforcing.
+    /// Explains how much the local gate decides in the current mode.
     private var gateNote: String? {
         switch model.config?.gate.mode {
+        case "enforce": return "In enforce mode the local gate decides spam on its own; mail it considers clean is still checked by Jev."
         case "shadow": return "The local gate is in shadow mode: it records its verdicts, but Jev decides every message."
         case "off": return "The local gate is off, so Jev decides every message."
         default: return nil

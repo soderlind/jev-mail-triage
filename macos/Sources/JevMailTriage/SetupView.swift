@@ -73,7 +73,7 @@ struct SetupView: View {
                 Label("Subject", systemImage: "text.alignleft")
                 Label("Plain-text body (HTML converted to text)", systemImage: "doc.plaintext")
                 Label("Link destinations found in the message", systemImage: "link")
-                Text("Input is capped at 64 KiB by default. Attachments and images are not sent. If the local gate is set to enforce, messages it can decide confidently are not sent at all.")
+                Text("Input is capped at 64 KiB by default. Attachments and images are not sent. If the local gate is set to enforce, messages it marks as spam are not sent at all.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .padding(12)

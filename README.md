@@ -31,7 +31,7 @@ fewer messages need to be sent to TypeSafe.
 > **Privacy:** for each message assessed by Jev, the sender, subject, a shortened
 > text body, and link addresses are sent to TypeSafe. That data leaves Proton's
 > end-to-end encrypted environment. Use this tool only if you are comfortable
-> with that. Messages decided by the local gate in `enforce` mode are not sent.
+> with that. Messages the local gate marks as spam in `enforce` mode are not sent.
 
 ## What you need
 
@@ -264,8 +264,11 @@ Set `mode` in the `[gate]` section:
 - **`off`** — the gate is not used; every message goes to Jev.
 - **`shadow`** (recommended start) — the gate records what it would have
   decided, but Jev still decides and every message is still sent to TypeSafe.
-- **`enforce`** — confident local verdicts are used and those messages are
-  **not** sent to TypeSafe.
+- **`enforce`** — local **spam** verdicts are final: the message is handled as
+  spam and **not** sent to TypeSafe. Mail the gate considers clean is still
+  checked by Jev, because a familiar sender or clean-looking text does not rule
+  out phishing. The exception is an authenticated sender on your allowlist,
+  which is left alone whatever Jev says, so it is not sent either.
 
 Before switching to `enforce`, run `train`, let `serve` run in shadow mode for a
 while, and check that `status` shows few `local_disagree`. Also check that
@@ -477,7 +480,7 @@ and combined), and how many messages would be sent for review. It uses your
 configured thresholds and model. If the local gate is on, a `local_gate` line
 shows how many files it decided and any local false positives (spam verdicts on
 clean files) or missed spam (clean verdicts on spam or phishing files). In
-`enforce` mode, the other figures use the local verdicts too. `evaluate` never
+`enforce` mode, the other figures use the local spam verdicts too. `evaluate` never
 trains the gate.
 
 Each file is sent to TypeSafe and may use API credits. Use synthetic or
